@@ -1,0 +1,37 @@
+# Voicify Project Rules
+
+## Code Style
+- Go standard formatting (gofmt)
+- Follow Go best practices for error handling
+- Packages organized by functionality in cmd/, internal/, and pkg/
+- Interfaces defined for major components to allow easy testing and extension
+
+## Project Patterns
+- Plugin system based on the PluginAction interface with Execute and GetMetadata methods
+- Configuration stored in YAML format at $HOME/.config/voicify/voicify.yaml
+- Audio recordings saved to $HOME/.config/voicify/recordings/
+- Structured logging with configurable levels
+
+## User Preferences
+- Not fully determined yet - will be updated as we work with the project
+
+## Command Structure
+- Flag-based command line interface with -- prefix
+- Configuration wizard available via --wizard flag
+- Log level configurable via --log-level flag
+
+## Implementation Notes
+- Global keyboard shortcuts require different approaches for X11 vs Wayland
+- Transcription uses OpenAI Whisper which requires an API key
+- FFmpeg is required for audio processing
+- Plugin architecture designed to be extensible
+
+## Development Workflow
+- Not fully determined yet - will be updated as we work with the project
+
+## Future Ideas
+- Obsidian integration for web content capture
+- Vector database storage for memory function
+- Further AI integration beyond basic transcription
+
+Note: This file will be continuously updated as we learn more about the project and user preferences.

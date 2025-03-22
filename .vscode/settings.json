@@ -1,0 +1,41 @@
+{
+  "workbench.colorCustomizations": {
+    "commandCenter.border": "#15202b99",
+    "statusBar.background": "#e2ef47",
+    "statusBar.foreground": "#15202b",
+    "statusBarItem.hoverBackground": "#dbeb18",
+    "statusBarItem.remoteBackground": "#e2ef47",
+    "statusBarItem.remoteForeground": "#15202b",
+    "tab.activeBorder": "#e9f376",
+    "titleBar.activeBackground": "#dbeb18",
+    "titleBar.activeForeground": "#15202b",
+    "titleBar.inactiveBackground": "#dbeb1899",
+    "titleBar.inactiveForeground": "#15202b99"
+  },
+  "peacock.color": "#e2ef47",
+  "peacock.remoteColor": "#c0ec89",
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "always"
+    },
+    "editor.defaultFormatter": "golang.go"
+  },
+  "go.toolsManagement.autoUpdate": true,
+  "go.useLanguageServer": true,
+  "go.lintOnSave": "package",
+  "go.lintTool": "staticcheck",
+  "gopls": {
+    "ui.semanticTokens": true,
+    "formatting.gofumpt": true
+  },
+  "go.testOnSave": false,
+  "go.coverOnSave": false,
+  "go.testFlags": ["-v"],
+  "editor.insertSpaces": false,
+  "editor.formatOnSave": true,
+  "editor.rulers": [120],
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}

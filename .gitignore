@@ -1,0 +1,11 @@
+.env
+*.log
+
+# Plugins
+plugins/*
+!plugins/README.md
+IDEAS.md
+
+# Compiled plugin binaries
+*.so
+bin/*
