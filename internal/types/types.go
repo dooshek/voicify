@@ -30,38 +30,7 @@ type YdotoolConfig struct {
 	SocketPath string
 }
 
-type ActionMetadata struct {
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	LLMCommands *[]string `json:"commands"`
-	Priority    int       `json:"priority"`
-}
-
-// VoicifyPlugin defines the interface that all plugins must implement
-type VoicifyPlugin interface {
-	// Initialize is called when the plugin is loaded
-	Initialize() error
-
-	// GetActions returns a list of actions provided by this plugin
-	GetActions(transcription string) []PluginAction
-
-	// GetMetadata returns metadata about the plugin
-	GetMetadata() PluginMetadata
-}
-
-// PluginMetadata contains information about a plugin
-type PluginMetadata struct {
-	Name        string `json:"name"`        // Plugin name
-	Version     string `json:"version"`     // Plugin version
-	Description string `json:"description"` // Plugin description
-	Author      string `json:"author"`      // Plugin author
-}
-
-// PluginAction interface for actions that can be executed by the router
-type PluginAction interface {
-	Execute(transcription string) error
-	GetMetadata() ActionMetadata
-}
+// NOTE: Plugin-related types are now in plugin.go
 
 type LLMProvider string
 
