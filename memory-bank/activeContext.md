@@ -11,12 +11,14 @@ Based on the codebase and IDEAS.md, the current focus appears to be extending th
   - Users can now install plugins directly from Git repositories using `voicify plugin --install-repo <url>`
   - The system will clone the repository, build the plugin if needed, and install it
   - Simplified plugin repository requirements: repositories must have a main.go file in the root directory
+  - Added smart URL normalization: automatically adds 'https://' prefix and '.git' suffix if missing
 
 ## Active Decisions
 1. **Plugin Architecture**: The system uses a plugin-based architecture for handling different types of transcriptions, which allows for easy extension
 2. **Platform Support**: The application supports both X11 and Wayland with different implementation approaches
 3. **Transcription Service**: Using OpenAI Whisper for transcription due to its accuracy and ease of integration
 4. **Plugin Repository Structure**: Plugins installed from Git repositories must have their main.go file in the repository root
+5. **Git URL Handling**: Automatically normalize Git URLs by adding necessary prefixes and suffixes
 
 ## Implementation Considerations
 1. **Plugin Interface**: New plugins should implement the `PluginAction` interface with `Execute()` and `GetMetadata()` methods

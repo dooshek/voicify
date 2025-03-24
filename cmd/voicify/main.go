@@ -366,6 +366,17 @@ func buildPlugin(srcDir string) error {
 
 // installPluginFromRepo clones a git repository and installs the plugin
 func installPluginFromRepo(repoURL string, pluginsDir string) error {
+	// Normalize the repository URL
+	// Add https:// prefix if no protocol is specified
+	if !strings.HasPrefix(repoURL, "https://") && !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "git@") && !strings.HasPrefix(repoURL, "ssh://") {
+		repoURL = "https://" + repoURL
+	}
+
+	// Add .git suffix if not present
+	if !strings.HasSuffix(repoURL, ".git") {
+		repoURL = repoURL + ".git"
+	}
+
 	// Create a temporary directory for the repository
 	tempDir, err := os.MkdirTemp("", "voicify-plugin-*")
 	if err != nil {
