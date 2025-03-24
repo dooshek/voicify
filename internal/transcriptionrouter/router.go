@@ -77,7 +77,7 @@ func New(transcription string) *Router {
 	var pluginMgr *plugin.Manager
 
 	if err == nil {
-		pluginsDir := filepath.Join(fileOps.GetBaseDir(), "plugins")
+		pluginsDir := fileOps.GetPluginsDir()
 		pluginMgr = plugin.NewManager(pluginsDir)
 
 		// Load plugins

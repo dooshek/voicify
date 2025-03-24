@@ -151,6 +151,7 @@ func (f *DefaultFileOps) EnsureDirectories() error {
 		f.GetResourcesDir(),
 		f.GetAudioDir(),
 		f.GetPromptsDir(),
+		f.GetPluginsDir(),
 	}
 
 	for _, dir := range dirs {
@@ -231,5 +232,5 @@ func (f *DefaultFileOps) GetBaseDir() string {
 }
 
 func (f *DefaultFileOps) GetPluginsDir() string {
-	return filepath.Join(f.GetBaseDir(), "plugins")
+	return filepath.Join(f.configDir, "plugins")
 }
