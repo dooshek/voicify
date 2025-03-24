@@ -24,6 +24,6 @@ func GetFocusedWindow() (*Window, error) {
 
 	return &Window{
 		Title: window.Title,
-		ID:    window.ID,
+		ID:    window.PID,
 	}, nil
 }

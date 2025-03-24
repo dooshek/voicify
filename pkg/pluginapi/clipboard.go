@@ -6,10 +6,10 @@ import (
 
 // PasteText pastes text from the clipboard
 func PasteText(text string) error {
-	return clipboard.Paste(text)
+	return clipboard.WriteAndPaste(text)
 }
 
 // PasteWithReturn pastes text and adds a newline
 func PasteWithReturn(text string) error {
-	return clipboard.PasteWithReturn(text)
+	return clipboard.WriteAndPasteWithReturn(text)
 }

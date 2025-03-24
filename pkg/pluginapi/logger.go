@@ -1,6 +1,9 @@
 package pluginapi
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/dooshek/voicify/internal/logger"
 )
 
@@ -41,5 +44,7 @@ func Error(message string, err error) {
 
 // Errorf logs a formatted error message
 func Errorf(format string, args ...interface{}) {
-	logger.Errorf(format, args...)
+	// Create a placeholder error since logger.Errorf requires an error
+	err := errors.New(fmt.Sprintf(format, args...))
+	logger.Error(fmt.Sprintf(format, args...), err)
 }
