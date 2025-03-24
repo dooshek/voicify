@@ -67,7 +67,47 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Set log level (debug|info|warn|error)")
 	logFilename := flag.String("log-filename", "", "Log to file instead of stdout")
 
-	// Parse the main command
+	// Check if we're running a plugin subcommand before parsing global flags
+	if len(os.Args) > 1 && os.Args[1] == "plugin" {
+		// Define plugin command related flags
+		pluginCmd := flag.NewFlagSet("plugin", flag.ExitOnError)
+
+		// Add the same global flags to the plugin command
+		pluginLogLevel := pluginCmd.String("log-level", "info", "Set log level (debug|info|warn|error)")
+		pluginLogFilename := pluginCmd.String("log-filename", "", "Log to file instead of stdout")
+
+		// Add plugin-specific flags
+		pluginInstall := pluginCmd.String("install", "", "Install a plugin from a directory")
+		pluginRemove := pluginCmd.String("remove", "", "Remove an installed plugin")
+		pluginList := pluginCmd.Bool("list", false, "List installed plugins")
+		installRepo := pluginCmd.String("install-repo", "", "Install a plugin from a git repository (repo must have main.go in root)")
+
+		// Parse the plugin command flags
+		if err := pluginCmd.Parse(os.Args[2:]); err != nil {
+			fmt.Printf("Error parsing plugin flags: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Set up logging level and output
+		logger.SetLevel(*pluginLogLevel)
+		if *pluginLogFilename != "" {
+			if err := logger.SetOutputFile(*pluginLogFilename); err != nil {
+				fmt.Printf("Error setting log file: %v\n", err)
+				os.Exit(1)
+			}
+			defer logger.CloseLogFile()
+		}
+
+		// Handle the plugin command
+		err := handlePluginCommand(pluginCmd, pluginInstall, pluginRemove, pluginList, installRepo)
+		if err != nil {
+			logger.Error("Plugin command failed", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Parse the global flags for non-plugin commands
 	flag.Parse()
 
 	// Set up logging level and output
@@ -78,23 +118,6 @@ func main() {
 			os.Exit(1)
 		}
 		defer logger.CloseLogFile()
-	}
-
-	// Check if we're running a plugin subcommand
-	if len(os.Args) > 1 && os.Args[1] == "plugin" {
-		// Define plugin command related flags
-		pluginCmd := flag.NewFlagSet("plugin", flag.ExitOnError)
-		pluginInstall := pluginCmd.String("install", "", "Install a plugin from a directory")
-		pluginRemove := pluginCmd.String("remove", "", "Remove an installed plugin")
-		pluginList := pluginCmd.Bool("list", false, "List installed plugins")
-		installRepo := pluginCmd.String("install-repo", "", "Install a plugin from a git repository (repo must have main.go in root)")
-
-		err := handlePluginCommand(pluginCmd, os.Args[2:], pluginInstall, pluginRemove, pluginList, installRepo)
-		if err != nil {
-			logger.Error("Plugin command failed", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
 	}
 
 	var cfg *types.Config
@@ -200,12 +223,7 @@ func main() {
 }
 
 // handlePluginCommand implements plugin management functionality
-func handlePluginCommand(pluginCmd *flag.FlagSet, args []string, installPath *string, removeName *string, list *bool, installRepo *string) error {
-	// Parse the plugin command flags
-	if err := pluginCmd.Parse(args); err != nil {
-		return err
-	}
-
+func handlePluginCommand(pluginCmd *flag.FlagSet, installPath *string, removeName *string, list *bool, installRepo *string) error {
 	fileOps, err := fileops.NewDefaultFileOps()
 	if err != nil {
 		return fmt.Errorf("failed to initialize file operations: %w", err)
