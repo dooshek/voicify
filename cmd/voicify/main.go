@@ -382,11 +382,19 @@ func buildPlugin(srcDir string) error {
 		return fmt.Errorf("failed to change to source directory: %w", err)
 	}
 
+	// Create pipes for capturing stdout and stderr
+	var stderrBuf strings.Builder
+
 	// Run go build
 	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "main.so", ".")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stderr = &stderrBuf
+
 	if err := cmd.Run(); err != nil {
+		errMsg := stderrBuf.String()
+		if errMsg != "" {
+			fmt.Println("❌ Build error:")
+			fmt.Println(errMsg)
+		}
 		return fmt.Errorf("failed to build plugin: %w", err)
 	}
 
@@ -531,11 +539,19 @@ func installPluginQuiet(srcDir string, pluginsDir string) error {
 			return fmt.Errorf("failed to change to source directory: %w", err)
 		}
 
-		// Run go build with hidden output
+		// Create a buffer to capture stderr
+		var stderrBuf strings.Builder
+
+		// Run go build with captured stderr
 		cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "main.so", ".")
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		cmd.Stderr = &stderrBuf
+
 		if err := cmd.Run(); err != nil {
+			errMsg := stderrBuf.String()
+			if errMsg != "" {
+				fmt.Println("❌ Build error:")
+				fmt.Println(errMsg)
+			}
 			return fmt.Errorf("failed to build plugin: %w", err)
 		}
 		fmt.Println("✅ Build completed")
