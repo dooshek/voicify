@@ -7,11 +7,15 @@ import (
 // Window represents a window
 type Window struct {
 	Title string
-	ID    string
+}
+
+// NewWindow creates a new window instance
+func NewWindow() *Window {
+	return &Window{}
 }
 
 // GetFocusedWindow gets the currently focused window
-func GetFocusedWindow() (*Window, error) {
+func (w *Window) GetFocusedWindow() (*Window, error) {
 	detector, err := windowdetect.New()
 	if err != nil {
 		return nil, err
@@ -24,6 +28,5 @@ func GetFocusedWindow() (*Window, error) {
 
 	return &Window{
 		Title: window.Title,
-		ID:    window.PID,
 	}, nil
 }
