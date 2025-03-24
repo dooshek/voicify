@@ -1,17 +1,30 @@
 package types
 
-import (
-	"github.com/dooshek/voicify/pkg/pluginapi"
-)
-
 // PluginMetadata contains information about a plugin
-type PluginMetadata = pluginapi.PluginMetadata
+type PluginMetadata struct {
+	Name        string
+	Version     string
+	Description string
+	Author      string
+}
 
 // ActionMetadata contains information about an action
-type ActionMetadata = pluginapi.ActionMetadata
+type ActionMetadata struct {
+	Name        string
+	Description string
+	LLMCommands *[]string
+	Priority    int
+}
 
 // PluginAction represents an action provided by a plugin
-type PluginAction = pluginapi.PluginAction
+type PluginAction interface {
+	Execute(transcription string) error
+	GetMetadata() ActionMetadata
+}
 
 // VoicifyPlugin is the interface that all plugins must implement
-type VoicifyPlugin = pluginapi.VoicifyPlugin
+type VoicifyPlugin interface {
+	Initialize() error
+	GetMetadata() PluginMetadata
+	GetActions(transcription string) []PluginAction
+}
