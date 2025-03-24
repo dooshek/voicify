@@ -248,21 +248,23 @@ func handlePluginCommand(pluginCmd *flag.FlagSet, args []string, installPath *st
 
 // listPlugins lists all installed plugins
 func listPlugins(pluginsDir string) error {
+	fmt.Println("⏳ Listing installed plugins...")
+
 	entries, err := os.ReadDir(pluginsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No plugins directory found.")
+			fmt.Println("ℹ️ No plugins directory found.")
 			return nil
 		}
 		return fmt.Errorf("failed to read plugins directory: %w", err)
 	}
 
 	if len(entries) == 0 {
-		fmt.Println("No plugins installed.")
+		fmt.Println("ℹ️ No plugins installed.")
 		return nil
 	}
 
-	fmt.Println("Installed plugins:")
+	fmt.Println("📋 Installed plugins:")
 	for _, entry := range entries {
 		if entry.IsDir() {
 			mainSoPath := filepath.Join(pluginsDir, entry.Name(), "main.so")
@@ -296,6 +298,8 @@ func installPlugin(srcDir string, pluginsDir string) error {
 		return fmt.Errorf("plugin %s is already installed", pluginName)
 	}
 
+	fmt.Printf("⏳ Installing plugin %s...\n", pluginName)
+
 	// Create plugin directory
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create plugin directory: %w", err)
@@ -305,7 +309,6 @@ func installPlugin(srcDir string, pluginsDir string) error {
 	mainSoPath := filepath.Join(srcDir, "main.so")
 	if _, err := os.Stat(mainSoPath); os.IsNotExist(err) {
 		// Try to build the plugin
-		fmt.Printf("Building plugin %s...\n", pluginName)
 		if err := buildPlugin(srcDir); err != nil {
 			return fmt.Errorf("failed to build plugin: %w", err)
 		}
@@ -335,6 +338,8 @@ func removePlugin(pluginName string, pluginsDir string) error {
 		return fmt.Errorf("plugin %s is not installed", pluginName)
 	}
 
+	fmt.Printf("⏳ Removing plugin %s...\n", pluginName)
+
 	// Remove plugin directory
 	if err := os.RemoveAll(pluginDir); err != nil {
 		return fmt.Errorf("failed to remove plugin directory: %w", err)
@@ -346,6 +351,8 @@ func removePlugin(pluginName string, pluginsDir string) error {
 
 // buildPlugin attempts to build a plugin in the specified directory
 func buildPlugin(srcDir string) error {
+	fmt.Println("⏳ Building plugin...")
+
 	// Change to the source directory
 	currentDir, err := os.Getwd()
 	if err != nil {
@@ -359,9 +366,14 @@ func buildPlugin(srcDir string) error {
 
 	// Run go build
 	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "main.so", ".")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build plugin: %w", err)
+	}
+
+	fmt.Println("✅ Build completed")
+	return nil
 }
 
 // installPluginFromRepo clones a git repository and installs the plugin
@@ -385,13 +397,15 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 	defer os.RemoveAll(tempDir)
 
 	// Clone the repository
-	fmt.Printf("Cloning repository %s...\n", repoURL)
+	fmt.Printf("⏳ Cloning repository %s...\n", repoURL)
 	cmd := exec.Command("git", "clone", repoURL, tempDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Redirect stdout and stderr to discard to hide output
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to clone repository: %w", err)
 	}
+	fmt.Println("✅ Clone completed")
 
 	// Get the plugin name from the repository URL
 	repoName := filepath.Base(repoURL)
@@ -405,7 +419,121 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		return fmt.Errorf("repository does not contain a main.go file in the root directory - not a valid plugin")
 	}
 
-	// Install the plugin from the cloned repository
-	fmt.Printf("Installing plugin from %s...\n", repoName)
-	return installPlugin(tempDir, pluginsDir)
+	// Check if go.mod exists, create if not
+	goModPath := filepath.Join(tempDir, "go.mod")
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		fmt.Println("⏳ Initializing Go module...")
+		// Change to the source directory
+		currentDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		if err := os.Chdir(tempDir); err != nil {
+			return fmt.Errorf("failed to change to source directory: %w", err)
+		}
+
+		// Initialize go module
+		initCmd := exec.Command("go", "mod", "init", repoName)
+		initCmd.Stdout = nil
+		initCmd.Stderr = nil
+		if err := initCmd.Run(); err != nil {
+			os.Chdir(currentDir) // Make sure we change back even on error
+			return fmt.Errorf("failed to initialize Go module: %w", err)
+		}
+
+		// Make sure we get our dependencies
+		tidyCmd := exec.Command("go", "mod", "tidy")
+		tidyCmd.Stdout = nil
+		tidyCmd.Stderr = nil
+		if err := tidyCmd.Run(); err != nil {
+			os.Chdir(currentDir) // Make sure we change back even on error
+			return fmt.Errorf("failed to tidy Go module: %w", err)
+		}
+
+		// Change back to original directory
+		if err := os.Chdir(currentDir); err != nil {
+			return fmt.Errorf("failed to change back to original directory: %w", err)
+		}
+		fmt.Println("✅ Module initialized")
+	}
+
+	// Install the plugin
+	fmt.Printf("⏳ Installing plugin %s...\n", repoName)
+
+	// We need to modify the installPlugin function or create a custom installation flow here
+	// that also hides command output
+	if err := installPluginQuiet(tempDir, pluginsDir); err != nil {
+		return err
+	}
+
+	fmt.Printf("✅ Plugin %s installed successfully\n", repoName)
+	return nil
+}
+
+// installPluginQuiet is a version of installPlugin that hides command output
+func installPluginQuiet(srcDir string, pluginsDir string) error {
+	// Check if source directory exists
+	srcInfo, err := os.Stat(srcDir)
+	if err != nil {
+		return fmt.Errorf("failed to access source directory: %w", err)
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source path is not a directory: %s", srcDir)
+	}
+
+	// Get plugin name from directory name
+	pluginName := filepath.Base(srcDir)
+	destDir := filepath.Join(pluginsDir, pluginName)
+
+	// Check if plugin is already installed
+	if _, err := os.Stat(destDir); err == nil {
+		return fmt.Errorf("plugin %s is already installed", pluginName)
+	}
+
+	// Create plugin directory
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create plugin directory: %w", err)
+	}
+
+	// Check if main.so exists in source directory
+	mainSoPath := filepath.Join(srcDir, "main.so")
+	if _, err := os.Stat(mainSoPath); os.IsNotExist(err) {
+		// Try to build the plugin
+		fmt.Println("⏳ Building plugin...")
+
+		// Change to the source directory
+		currentDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		defer os.Chdir(currentDir)
+
+		if err := os.Chdir(srcDir); err != nil {
+			return fmt.Errorf("failed to change to source directory: %w", err)
+		}
+
+		// Run go build with hidden output
+		cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "main.so", ".")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to build plugin: %w", err)
+		}
+		fmt.Println("✅ Build completed")
+	}
+
+	// Copy main.so to plugin directory
+	mainSoData, err := os.ReadFile(mainSoPath)
+	if err != nil {
+		return fmt.Errorf("failed to read plugin file: %w", err)
+	}
+
+	destPath := filepath.Join(destDir, "main.so")
+	if err := os.WriteFile(destPath, mainSoData, 0o644); err != nil {
+		return fmt.Errorf("failed to write plugin file: %w", err)
+	}
+
+	fmt.Printf("✅ Plugin %s installed successfully\n", pluginName)
+	return nil
 }

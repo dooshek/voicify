@@ -12,6 +12,8 @@ Based on the codebase and IDEAS.md, the current focus appears to be extending th
   - The system will clone the repository, build the plugin if needed, and install it
   - Simplified plugin repository requirements: repositories must have a main.go file in the root directory
   - Added smart URL normalization: automatically adds 'https://' prefix and '.git' suffix if missing
+  - Improved error handling for repositories without go.mod files
+  - Enhanced user interface with progress indicators and cleaner output
 
 ## Active Decisions
 1. **Plugin Architecture**: The system uses a plugin-based architecture for handling different types of transcriptions, which allows for easy extension
@@ -19,6 +21,7 @@ Based on the codebase and IDEAS.md, the current focus appears to be extending th
 3. **Transcription Service**: Using OpenAI Whisper for transcription due to its accuracy and ease of integration
 4. **Plugin Repository Structure**: Plugins installed from Git repositories must have their main.go file in the repository root
 5. **Git URL Handling**: Automatically normalize Git URLs by adding necessary prefixes and suffixes
+6. **User Experience**: Use progress indicators and hide verbose command output for a cleaner CLI experience
 
 ## Implementation Considerations
 1. **Plugin Interface**: New plugins should implement the `PluginAction` interface with `Execute()` and `GetMetadata()` methods
