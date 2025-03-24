@@ -7,12 +7,16 @@ Based on the codebase and IDEAS.md, the current focus appears to be extending th
 2. **Memory Storage Plugin**: Creating a plugin that can store information in a vector database for later retrieval
 
 ## Recent Changes
-As this is the initial memory bank creation, no specific recent changes are documented. The project appears to be in active development with core functionality working and new features being planned.
+- Added support for installing plugins from Git repositories
+  - Users can now install plugins directly from Git repositories using `voicify plugin --install-repo <url>`
+  - The system will clone the repository, build the plugin if needed, and install it
+  - Simplified plugin repository requirements: repositories must have a main.go file in the root directory
 
 ## Active Decisions
 1. **Plugin Architecture**: The system uses a plugin-based architecture for handling different types of transcriptions, which allows for easy extension
 2. **Platform Support**: The application supports both X11 and Wayland with different implementation approaches
 3. **Transcription Service**: Using OpenAI Whisper for transcription due to its accuracy and ease of integration
+4. **Plugin Repository Structure**: Plugins installed from Git repositories must have their main.go file in the repository root
 
 ## Implementation Considerations
 1. **Plugin Interface**: New plugins should implement the `PluginAction` interface with `Execute()` and `GetMetadata()` methods

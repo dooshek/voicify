@@ -87,8 +87,9 @@ func main() {
 		pluginInstall := pluginCmd.String("install", "", "Install a plugin from a directory")
 		pluginRemove := pluginCmd.String("remove", "", "Remove an installed plugin")
 		pluginList := pluginCmd.Bool("list", false, "List installed plugins")
+		installRepo := pluginCmd.String("install-repo", "", "Install a plugin from a git repository (repo must have main.go in root)")
 
-		err := handlePluginCommand(pluginCmd, os.Args[2:], pluginInstall, pluginRemove, pluginList)
+		err := handlePluginCommand(pluginCmd, os.Args[2:], pluginInstall, pluginRemove, pluginList, installRepo)
 		if err != nil {
 			logger.Error("Plugin command failed", err)
 			os.Exit(1)
@@ -199,13 +200,12 @@ func main() {
 }
 
 // handlePluginCommand implements plugin management functionality
-func handlePluginCommand(pluginCmd *flag.FlagSet, args []string, installPath *string, removeName *string, list *bool) error {
+func handlePluginCommand(pluginCmd *flag.FlagSet, args []string, installPath *string, removeName *string, list *bool, installRepo *string) error {
 	// Parse the plugin command flags
 	if err := pluginCmd.Parse(args); err != nil {
-		return fmt.Errorf("failed to parse plugin command flags: %w", err)
+		return err
 	}
 
-	// Initialize fileops to get the plugins directory
 	fileOps, err := fileops.NewDefaultFileOps()
 	if err != nil {
 		return fmt.Errorf("failed to initialize file operations: %w", err)
@@ -227,6 +227,11 @@ func handlePluginCommand(pluginCmd *flag.FlagSet, args []string, installPath *st
 		return installPlugin(*installPath, pluginsDir)
 	}
 
+	// Handle plugin installation from git repo
+	if *installRepo != "" {
+		return installPluginFromRepo(*installRepo, pluginsDir)
+	}
+
 	// Handle plugin removal
 	if *removeName != "" {
 		return removePlugin(*removeName, pluginsDir)
@@ -236,6 +241,7 @@ func handlePluginCommand(pluginCmd *flag.FlagSet, args []string, installPath *st
 	fmt.Println("Plugin management commands:")
 	fmt.Println("  voicify plugin --list                  List installed plugins")
 	fmt.Println("  voicify plugin --install <dir>         Install a plugin from directory")
+	fmt.Println("  voicify plugin --install-repo <url>    Install a plugin from git repository (repo must have main.go in root)")
 	fmt.Println("  voicify plugin --remove <plugin-name>  Remove a plugin")
 	return nil
 }
@@ -356,4 +362,39 @@ func buildPlugin(srcDir string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// installPluginFromRepo clones a git repository and installs the plugin
+func installPluginFromRepo(repoURL string, pluginsDir string) error {
+	// Create a temporary directory for the repository
+	tempDir, err := os.MkdirTemp("", "voicify-plugin-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Clone the repository
+	fmt.Printf("Cloning repository %s...\n", repoURL)
+	cmd := exec.Command("git", "clone", repoURL, tempDir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to clone repository: %w", err)
+	}
+
+	// Get the plugin name from the repository URL
+	repoName := filepath.Base(repoURL)
+	if strings.HasSuffix(repoName, ".git") {
+		repoName = repoName[:len(repoName)-4]
+	}
+
+	// Check if main.go exists in the root directory
+	mainGoPath := filepath.Join(tempDir, "main.go")
+	if _, err := os.Stat(mainGoPath); os.IsNotExist(err) {
+		return fmt.Errorf("repository does not contain a main.go file in the root directory - not a valid plugin")
+	}
+
+	// Install the plugin from the cloned repository
+	fmt.Printf("Installing plugin from %s...\n", repoName)
+	return installPlugin(tempDir, pluginsDir)
 }

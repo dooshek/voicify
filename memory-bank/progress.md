@@ -27,6 +27,14 @@ Based on the README and project structure, the following features appear to be i
    - VSCode plugin for IDE commands
    - Email plugin for email-related processing
 
+## Completed Features
+- [x] Plugin system architecture implemented
+- [x] Plugin loading and execution
+- [x] Plugin installation from local directory
+- [x] Plugin removal functionality
+- [x] Plugin listing functionality
+- [x] Plugin installation from Git repository
+
 ## In Progress
 Based on IDEAS.md and project context, these features appear to be under development:
 
