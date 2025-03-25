@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"plugin"
+	"reflect"
 	"sync"
 
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/types"
+	"github.com/dooshek/voicify/pkg/pluginapi"
 )
 
 // Manager handles plugin loading and management
@@ -101,14 +103,130 @@ func (m *Manager) loadPlugin(path string) (types.VoicifyPlugin, error) {
 		return nil, fmt.Errorf("plugin does not export 'CreatePlugin' symbol: %w", err)
 	}
 
-	// Check if the symbol is of the correct type
-	createFunc, ok := sym.(func() types.VoicifyPlugin)
-	if !ok {
-		return nil, fmt.Errorf("plugin 'CreatePlugin' has wrong type: %T", sym)
+	// Cast the symbol to a function
+	switch createFunc := sym.(type) {
+	case func() types.VoicifyPlugin:
+		// If the plugin returns types.VoicifyPlugin directly, use it
+		return createFunc(), nil
+	case func() interface{}:
+		// If the plugin returns interface{}, try to adapt it
+		pluginInstance := createFunc()
+		if plugin, ok := pluginInstance.(types.VoicifyPlugin); ok {
+			return plugin, nil
+		}
+		// If it doesn't implement types.VoicifyPlugin, create an adapter
+		return &pluginAdapter{plugin: pluginInstance}, nil
+	default:
+		// Try one more approach for pluginapi.VoicifyPlugin
+		// This is needed because Go plugins are very strict about types
+		createFuncRaw, ok := sym.(func() pluginapi.VoicifyPlugin)
+		if !ok {
+			return nil, fmt.Errorf("plugin 'CreatePlugin' has unsupported signature: %T", sym)
+		}
+		pluginInstance := createFuncRaw()
+		return &pluginAdapter{plugin: pluginInstance}, nil
+	}
+}
+
+// pluginAdapter adapts a pluginapi.VoicifyPlugin to a types.VoicifyPlugin
+type pluginAdapter struct {
+	plugin interface{}
+}
+
+// Initialize calls the Initialize method on the pluginapi plugin
+func (a *pluginAdapter) Initialize() error {
+	// Use reflection to call Initialize
+	init := reflect.ValueOf(a.plugin).MethodByName("Initialize")
+	results := init.Call(nil)
+	if !results[0].IsNil() {
+		return results[0].Interface().(error)
+	}
+	return nil
+}
+
+// GetMetadata adapts the pluginapi.PluginMetadata to types.PluginMetadata
+func (a *pluginAdapter) GetMetadata() types.PluginMetadata {
+	// Use reflection to call GetMetadata
+	getMetadata := reflect.ValueOf(a.plugin).MethodByName("GetMetadata")
+	results := getMetadata.Call(nil)
+	apiMetadata := results[0].Interface()
+
+	// Extract fields using reflection
+	metadataValue := reflect.ValueOf(apiMetadata)
+
+	return types.PluginMetadata{
+		Name:        metadataValue.FieldByName("Name").String(),
+		Version:     metadataValue.FieldByName("Version").String(),
+		Description: metadataValue.FieldByName("Description").String(),
+		Author:      metadataValue.FieldByName("Author").String(),
+	}
+}
+
+// GetActions adapts the pluginapi.PluginAction slices to types.PluginAction
+func (a *pluginAdapter) GetActions(transcription string) []types.PluginAction {
+	// Use reflection to call GetActions
+	getActions := reflect.ValueOf(a.plugin).MethodByName("GetActions")
+	args := []reflect.Value{reflect.ValueOf(transcription)}
+	results := getActions.Call(args)
+	apiActions := results[0].Interface()
+
+	// Convert to a slice of reflection values
+	apiActionsValue := reflect.ValueOf(apiActions)
+	length := apiActionsValue.Len()
+
+	// Create a slice to hold the adapted actions
+	typesActions := make([]types.PluginAction, length)
+
+	// Adapt each action
+	for i := 0; i < length; i++ {
+		apiAction := apiActionsValue.Index(i).Interface()
+		typesActions[i] = &actionAdapter{apiAction: apiAction}
 	}
 
-	// Create the plugin instance
-	return createFunc(), nil
+	return typesActions
+}
+
+// actionAdapter adapts a pluginapi.PluginAction to a types.PluginAction
+type actionAdapter struct {
+	apiAction interface{}
+}
+
+// Execute calls the Execute method on the pluginapi action
+func (a *actionAdapter) Execute(transcription string) error {
+	// Use reflection to call Execute
+	execute := reflect.ValueOf(a.apiAction).MethodByName("Execute")
+	args := []reflect.Value{reflect.ValueOf(transcription)}
+	results := execute.Call(args)
+	if !results[0].IsNil() {
+		return results[0].Interface().(error)
+	}
+	return nil
+}
+
+// GetMetadata adapts the pluginapi.ActionMetadata to types.ActionMetadata
+func (a *actionAdapter) GetMetadata() types.ActionMetadata {
+	// Use reflection to call GetMetadata
+	getMetadata := reflect.ValueOf(a.apiAction).MethodByName("GetMetadata")
+	results := getMetadata.Call(nil)
+	apiMetadata := results[0].Interface()
+
+	// Extract fields using reflection
+	metadataValue := reflect.ValueOf(apiMetadata)
+
+	// Handle LLMCommands which is a pointer
+	var llmCommands *[]string
+	llmField := metadataValue.FieldByName("LLMCommands")
+	if !llmField.IsNil() {
+		commands := llmField.Elem().Interface().([]string)
+		llmCommands = &commands
+	}
+
+	return types.ActionMetadata{
+		Name:        metadataValue.FieldByName("Name").String(),
+		Description: metadataValue.FieldByName("Description").String(),
+		LLMCommands: llmCommands,
+		Priority:    int(metadataValue.FieldByName("Priority").Int()),
+	}
 }
 
 // GetPlugins returns all loaded plugins
