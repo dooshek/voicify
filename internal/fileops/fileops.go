@@ -186,7 +186,12 @@ func (f *DefaultFileOps) CheckPID() error {
 
 	pid, err := strconv.Atoi(string(data))
 	if err != nil {
-		return fmt.Errorf("invalid PID in file: %w", err)
+		// Instead of returning an error, clean up the invalid PID file
+		logger.Debug("Found invalid PID file, cleaning up")
+		if cleanErr := f.CleanupPID(); cleanErr != nil {
+			logger.Debugf("Failed to clean up invalid PID file: %v", cleanErr)
+		}
+		return nil
 	}
 
 	// Check if process exists by sending signal 0

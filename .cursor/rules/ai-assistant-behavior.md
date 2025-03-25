@@ -9,7 +9,7 @@ If user is entering exactly one of the following [command] then return always on
  - [debug remove] - remove the debug code needed by `debug` command.
  - [docs] - add documentation to `README.md` file - recently changed code according to the project documentation and rules
  - [help] or [commands] - list of this commands available to user in a short, pleasant form
- - [g c] adds ALL changed files with proposed changes return only following commands using Markdown code (it HAS TO BE bash commands) and combined together with new line
+ - [git commit] adds ALL changed files with proposed changes return only following commands using Markdown code (it HAS TO BE bash commands) and combined together with new line
    - `git add "appropriate files which you changed in this thread"` - add all changed files to the staging area, each file on a command line
    - `git commit -m "[[COMMIT MESSAGE - use always conventionals commits style, use appropriate 'chore, fix, refactor or docs prefix' prefix well thought out and appropriate to the changes. The comment MUST TRY to answer the "why" question, NOT "what" was changed, ie. "fix: notification system is not working properly under Wayland" or "refactor: improve logging system"]]"`
 
