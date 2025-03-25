@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"plugin"
+	"reflect"
 	"strings"
 	"syscall"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/state"
 	"github.com/dooshek/voicify/internal/types"
+	"github.com/dooshek/voicify/pkg/pluginapi"
 )
 
 func init() {
@@ -541,16 +544,10 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		repoURL = repoURL + ".git"
 	}
 
-	// Extract the plugin name from the repository URL
+	// Extract the repository name from the URL (we'll use this temporarily)
 	repoName := filepath.Base(repoURL)
 	if strings.HasSuffix(repoName, ".git") {
 		repoName = repoName[:len(repoName)-4]
-	}
-
-	// Check if plugin is already installed
-	destDir := filepath.Join(pluginsDir, repoName)
-	if _, err := os.Stat(destDir); err == nil {
-		return fmt.Errorf("plugin %s is already installed at %s", repoName, destDir)
 	}
 
 	// Create a temporary directory for the repository
@@ -624,20 +621,27 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		fmt.Println("✅ Module initialized")
 	}
 
-	// Build and install the plugin directly to the final destination
-	// rather than going through the temp directory installation
-	fmt.Printf("⏳ Building and installing plugin %s...\n", repoName)
+	// Build the plugin
+	fmt.Printf("⏳ Building plugin from %s...\n", repoURL)
+	if err := buildPlugin(tempDir); err != nil {
+		return fmt.Errorf("failed to build plugin: %w", err)
+	}
+
+	// Now extract the plugin name from the built plugin
+	pluginName, err := getPluginNameFromBuildResult(tempDir)
+	if err != nil {
+		return fmt.Errorf("failed to determine plugin name: %w", err)
+	}
+
+	// Check if plugin is already installed
+	destDir := filepath.Join(pluginsDir, pluginName)
+	if _, err := os.Stat(destDir); err == nil {
+		return fmt.Errorf("plugin %s is already installed at %s", pluginName, destDir)
+	}
 
 	// Create the destination directory
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create plugin directory %s: %w", destDir, err)
-	}
-
-	// Build the plugin
-	if err := buildPlugin(tempDir); err != nil {
-		// If build fails, clean up the destination directory
-		os.RemoveAll(destDir)
-		return fmt.Errorf("failed to build plugin: %w", err)
 	}
 
 	// Check plugin compatibility
@@ -663,6 +667,67 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		return fmt.Errorf("failed to write plugin file to destination: %w", err)
 	}
 
-	fmt.Printf("✅ Plugin %s installed successfully to %s\n", repoName, destDir)
+	fmt.Printf("✅ Plugin %s installed successfully to %s\n", pluginName, destDir)
 	return nil
+}
+
+// getPluginNameFromBuildResult loads the plugin to get its actual name from metadata
+func getPluginNameFromBuildResult(pluginDir string) (string, error) {
+	// Default to directory name if we can't extract the plugin name
+	dirName := filepath.Base(pluginDir)
+
+	// Path to the built plugin
+	pluginPath := filepath.Join(pluginDir, "main.so")
+
+	// Try to open the plugin
+	p, err := plugin.Open(pluginPath)
+	if err != nil {
+		return dirName, fmt.Errorf("failed to open plugin for metadata extraction: %w", err)
+	}
+
+	// Look up the CreatePlugin symbol
+	sym, err := p.Lookup("CreatePlugin")
+	if err != nil {
+		return dirName, fmt.Errorf("plugin does not export 'CreatePlugin' symbol: %w", err)
+	}
+
+	// Create the plugin instance based on multiple possible signatures
+	var pluginInstance interface{}
+
+	switch createFunc := sym.(type) {
+	case func() types.VoicifyPlugin:
+		pluginInstance = createFunc()
+	case func() interface{}:
+		pluginInstance = createFunc()
+	case func() pluginapi.VoicifyPlugin:
+		pluginInstance = createFunc()
+	default:
+		return dirName, fmt.Errorf("plugin 'CreatePlugin' has unsupported signature: %T", sym)
+	}
+
+	// Try to call GetMetadata using reflection
+	metadataMethod := reflect.ValueOf(pluginInstance).MethodByName("GetMetadata")
+	if !metadataMethod.IsValid() {
+		return dirName, fmt.Errorf("plugin does not have a GetMetadata method")
+	}
+
+	// Call the method
+	results := metadataMethod.Call(nil)
+	if len(results) == 0 {
+		return dirName, fmt.Errorf("GetMetadata method returned no values")
+	}
+
+	// Try to extract the Name field using reflection
+	metadataValue := reflect.ValueOf(results[0].Interface())
+	nameField := metadataValue.FieldByName("Name")
+	if !nameField.IsValid() {
+		return dirName, fmt.Errorf("metadata does not have a Name field")
+	}
+
+	pluginName := nameField.String()
+	if pluginName == "" {
+		return dirName, fmt.Errorf("plugin name is empty")
+	}
+
+	return pluginName, nil
 }
