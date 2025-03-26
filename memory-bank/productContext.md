@@ -1,33 +1,30 @@
 # Product Context
 
 ## Problem Space
-Voicify addresses several key challenges:
-1. **Keyboard/Mouse Fatigue**: Reduces the need for constant typing, especially for users with RSI or those who prefer voice input
-2. **Context Switching**: Allows capturing thoughts without interrupting workflow
-3. **Accessibility**: Provides alternative input method for users with mobility limitations
-4. **Efficiency**: Voice can be faster than typing for certain types of content
+Voice input remains an underutilized interface for developer workflows despite its potential for improving productivity. Key problems include:
+- Text input can be slower than speaking for many users
+- Context switching between keyboard and other input methods disrupts workflow
+- Voice commands are often isolated from the rest of the system
+- Setting up voice-controlled workflows is typically complex and fragmented
+
+## Solution Approach
+Voicify addresses these challenges by:
+1. Offering a lightweight, keyboard-triggered voice recording system
+2. Seamlessly integrating with existing workflows through global shortcuts
+3. Providing high-quality transcription via OpenAI Whisper
+4. Implementing a plugin architecture for extending functionality based on transcribed content
+5. Making the solution accessible across different Linux display servers
 
 ## User Experience Goals
-- **Seamless Integration**: The tool should feel like a natural extension of the OS
-- **Minimal Friction**: Recording should start with a single keyboard shortcut
-- **Intelligent Handling**: Transcriptions should be routed to appropriate actions based on content
-- **Non-Intrusive**: The tool should operate in the background until needed
+- **Frictionless Activation**: Record with a simple keystroke
+- **Quick Feedback**: Fast transcription with minimal delay
+- **Intelligent Routing**: Direct voice input to appropriate actions
+- **Extensibility**: Allow users to create custom plugins
+- **Non-Intrusive**: Function as a background service with minimal UI
 
-## Product Vision
-Voicify aims to be the go-to voice command tool for developers and power users, enabling:
-- Quick note-taking through dictation
-- IDE command execution through voice
-- Email composition by voice
-- Content capture from various sources (as indicated in IDEAS.md)
-
-## Key Differentiators
-- Lightweight command-line interface rather than heavy GUI application
-- Plugin architecture for extensible functionality
-- Focus on developer workflows rather than general dictation
-- Cross-platform support including both X11 and Wayland
-
-## Future Opportunities
-From IDEAS.md and project context:
-- Plugin to capture web content from clipboard links and save to Obsidian
-- Memory function to store and retrieve information in a vector database
-- Potential for additional AI integration beyond transcription
+## Key Use Cases
+1. **Quick Note Taking**: Capture thoughts and ideas without interrupting workflow
+2. **Code Documentation**: Document code through voice without context switching
+3. **Command Execution**: Trigger specific actions in applications through voice
+4. **Email Composition**: Draft emails through voice commands
+5. **Custom Workflow Integration**: Execute complex sequences through voice instructions

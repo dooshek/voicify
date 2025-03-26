@@ -1,37 +1,41 @@
 # Voicify Project Rules
 
-## Code Style
-- Go standard formatting (gofmt)
-- Follow Go best practices for error handling
-- Packages organized by functionality in cmd/, internal/, and pkg/
-- Interfaces defined for major components to allow easy testing and extension
+## Code Organization
+- Maintain clear separation between cmd/, internal/, and pkg/ directories
+- Keep plugin implementations in the plugins/ directory
+- Follow Go package naming conventions
+- Use internal packages for code not intended for external use
 
-## Project Patterns
-- Plugin system based on the PluginAction interface with Execute and GetMetadata methods
-- Configuration stored in YAML format at $HOME/.config/voicify/voicify.yaml
-- Audio recordings saved to $HOME/.config/voicify/recordings/
-- Structured logging with configurable levels
+## Coding Patterns
+- Use interfaces for extensibility, especially for display server handlers and plugins
+- Implement error handling consistently with proper user feedback
+- Follow Go error handling conventions (return errors, don't use exceptions)
+- Use dependency injection for better testability
+- Keep functions focused and small
+
+## Project Conventions
+- Configuration file location: $HOME/.config/voicify/voicify.yaml
+- Use YAML for configuration files
+- Follow semantic versioning for releases
+- Implement graceful degradation when services are unavailable
+
+## Documentation Patterns
+- Maintain clear comments for exported functions and types
+- Use README.md for high-level documentation
+- Document plugin development process
+
+## Testing Approach
+- Write unit tests for core functionality
+- Implement integration tests for end-to-end workflows
+- Test on both X11 and Wayland environments
 
 ## User Preferences
-- Not fully determined yet - will be updated as we work with the project
+- Provide sensible defaults for configuration
+- Make all key bindings configurable
+- Allow plugin selection and configuration
 
-## Command Structure
-- Flag-based command line interface with -- prefix
-- Configuration wizard available via --wizard flag
-- Log level configurable via --log-level flag
-
-## Implementation Notes
-- Global keyboard shortcuts require different approaches for X11 vs Wayland
-- Transcription uses OpenAI Whisper which requires an API key
-- FFmpeg is required for audio processing
-- Plugin architecture designed to be extensible
-
-## Development Workflow
-- Not fully determined yet - will be updated as we work with the project
-
-## Future Ideas
-- Obsidian integration for web content capture
-- Vector database storage for memory function
-- Further AI integration beyond basic transcription
-
-Note: This file will be continuously updated as we learn more about the project and user preferences.
+## Known Implementation Paths
+- Use factory pattern for creating appropriate display server handlers
+- Implement plugin system using interfaces and reflection
+- Use Go's context for managing cancellation and timeouts
+- Implement graceful shutdown mechanism

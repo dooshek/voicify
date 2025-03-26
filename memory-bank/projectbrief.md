@@ -1,28 +1,30 @@
 # Project Brief: Voicify
 
-## Overview
-Voicify is a command-line tool that enables voice recording and transcription with global keyboard shortcuts. It allows users to quickly record audio and have it automatically transcribed using OpenAI Whisper.
+## Project Overview
+Voicify is a command-line tool that enables voice recording and transcription with global keyboard shortcuts. It allows users to record their voice with a keystroke and have it automatically transcribed using LLMs like OpenAI Whisper. The tool includes a plugin architecture that can intelligently call actions based on voice input, enabling seamless voice-controlled workflows.
 
 ## Core Goals
-1. Provide effortless voice-to-text capabilities through global keyboard shortcuts
-2. Transcribe voice recordings accurately using OpenAI Whisper
-3. Support both X11 and Wayland display servers
-4. Offer configurable key bindings for user customization
-5. Automatically copy transcriptions to clipboard for seamless workflow integration
-6. Enable plugin-based architecture for extending functionality based on transcription content
+1. Provide an efficient voice-to-text workflow triggered by global keyboard shortcuts
+2. Deliver high-quality transcription using OpenAI Whisper
+3. Implement a flexible plugin system for extending functionality
+4. Support major Linux display servers (X11 and Wayland)
+5. Maintain a clean, maintainable codebase following Go best practices
 
-## Target Users
-- Developers and power users who want to quickly capture thoughts or commands
-- Users who prefer voice input over typing for certain tasks
-- Anyone looking to integrate voice commands into their workflow
+## Target Audience
+- Developers and technical users who want to integrate voice commands into their workflow
+- Users with accessibility needs who prefer voice input
+- Anyone looking to improve productivity through voice-controlled actions
 
-## Success Criteria
-- Global keyboard shortcuts work reliably across X11 and Wayland
-- Transcription is accurate and fast
-- Configuration is straightforward and persistent
-- Plugin system effectively routes transcriptions to appropriate actions
+## Key Features
+- Global keyboard shortcuts for recording control
+- Automatic voice transcription
+- Clipboard integration
+- Plugin architecture for custom actions
+- Cross-platform support
 
-## Constraints
-- Requires FFmpeg for audio processing
-- Requires OpenAI API key for transcription
-- Has specific system dependencies for keyboard shortcut functionality
+## Success Metrics
+- Transcription accuracy and speed
+- User experience with minimal friction
+- Plugin extensibility and ease of development
+- System resource usage and performance
+- Cross-platform compatibility

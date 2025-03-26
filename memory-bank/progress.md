@@ -1,73 +1,48 @@
 # Progress
 
-## What Works
-Based on the README and project structure, the following features appear to be implemented and functional:
-
-1. **Core Recording Functionality**
-   - Global keyboard shortcut registration
-   - Audio recording with start/stop controls
-   - FFmpeg integration for audio processing
-
-2. **Transcription**
-   - OpenAI Whisper API integration
-   - Automatic transcription of recorded audio
-
-3. **User Interface**
-   - Command-line interface with flags
-   - Configuration wizard for initial setup
-   - Colored console logging with configurable levels
-
-4. **Platform Support**
-   - X11 support with required libraries
-   - Wayland support with input group permissions
-
-5. **Plugin System**
-   - Transcription router architecture
-   - Basic plugin interface implementation
-   - VSCode plugin for IDE commands
-   - Email plugin for email-related processing
-
-## Completed Features
-- [x] Plugin system architecture implemented
-- [x] Plugin loading and execution
-- [x] Plugin installation from local directory
-- [x] Plugin removal functionality
-- [x] Plugin listing functionality
-- [x] Plugin installation from Git repository
+## Completed
+- Project initialization and repository setup
+- Basic README documentation
+- Architecture design
+- Project structure creation
 
 ## In Progress
-Based on IDEAS.md and project context, these features appear to be under development:
+- Core recording functionality implementation
+- Input handling system for different display servers
+- Configuration management
+- Plugin system design
 
-1. **Web Content Plugin**
-   - Taking URLs from clipboard
-   - Fetching webpage content
-   - Saving to Obsidian
-
-2. **Memory Storage Plugin**
-   - Storing information in vector database
-   - Retrieval mechanisms
-
-## What's Left to Build
-Features that have been identified but not yet implemented:
-
-1. **Plugin Expansion**
-   - Complete Obsidian integration
-   - Implement vector database storage
-   - Additional specialized plugins
-
-2. **Advanced AI Features**
-   - Beyond basic transcription
-   - Potentially smarter command parsing
-
-3. **User Experience Improvements**
-   - Potential GUI improvements
-   - More advanced notification system
+## Planned
+- Transcription service integration
+- Basic plugins implementation (clipboard, VSCode, email)
+- Configuration wizard
+- Error handling and logging
+- Testing on different Linux distributions
+- Documentation improvements
 
 ## Known Issues
-No specific issues are documented at this initialization stage. As development progresses and testing occurs, this section will be updated with any identified bugs or limitations.
+- None documented yet as the project is in early development
 
-## Next Milestones
-1. Complete implementation of web content plugin
-2. Implement memory storage functionality
-3. Enhance plugin configuration system
-4. Improve documentation for plugin development
+## Development Milestones
+- [x] Project initialization
+- [x] Basic documentation
+- [x] Architecture design
+- [ ] Minimum viable product with core functionality
+- [ ] Plugin system implementation
+- [ ] Configuration wizard
+- [ ] Initial release
+- [ ] Additional plugin development
+
+## Feature Status
+
+| Feature               | Status      | Notes                                  |
+|-----------------------|-------------|----------------------------------------|
+| Project Structure     | Complete    | Following Go best practices            |
+| Keyboard Shortcuts    | In Progress | Supporting X11 and Wayland             |
+| Audio Recording       | In Progress | Using FFmpeg                           |
+| Transcription         | Planned     | Using OpenAI Whisper API               |
+| Plugin System         | In Progress | Creating extensible architecture       |
+| VSCode Plugin         | Planned     | For code-related commands              |
+| Email Plugin          | Planned     | For email composition                  |
+| Configuration Wizard  | Planned     | For easy setup                         |
+| Clipboard Integration | Planned     | For automatic copying of transcription |
