@@ -84,7 +84,6 @@ func main() {
 		pluginRemove := pluginCmd.String("remove", "", "Remove an installed plugin")
 		pluginList := pluginCmd.Bool("list", false, "List installed plugins")
 		installRepo := pluginCmd.String("install-repo", "", "Install a plugin from a git repository (repo must have main.go in root)")
-		cleanup := pluginCmd.Bool("cleanup", false, "Clean up invalid plugin installations")
 
 		// Parse the plugin command flags
 		if err := pluginCmd.Parse(os.Args[2:]); err != nil {
@@ -103,7 +102,7 @@ func main() {
 		}
 
 		// Handle the plugin command
-		err := handlePluginCommand(pluginCmd, pluginInstall, pluginRemove, pluginList, installRepo, cleanup)
+		err := handlePluginCommand(pluginCmd, pluginInstall, pluginRemove, pluginList, installRepo)
 		if err != nil {
 			logger.Error("Plugin command failed", err)
 			os.Exit(1)
@@ -225,7 +224,7 @@ func main() {
 }
 
 // handlePluginCommand implements plugin management functionality
-func handlePluginCommand(pluginCmd *flag.FlagSet, installPath *string, removeName *string, list *bool, installRepo *string, cleanup *bool) error {
+func handlePluginCommand(pluginCmd *flag.FlagSet, installPath *string, removeName *string, list *bool, installRepo *string) error {
 	fileOps, err := fileops.NewDefaultFileOps()
 	if err != nil {
 		return fmt.Errorf("failed to initialize file operations: %w", err)
@@ -235,11 +234,6 @@ func handlePluginCommand(pluginCmd *flag.FlagSet, installPath *string, removeNam
 	pluginsDir := fileOps.GetPluginsDir()
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create plugins directory: %w", err)
-	}
-
-	// Handle plugin cleanup option
-	if *cleanup {
-		return cleanupPlugins(pluginsDir)
 	}
 
 	// Handle plugin list
@@ -268,7 +262,6 @@ func handlePluginCommand(pluginCmd *flag.FlagSet, installPath *string, removeNam
 	fmt.Println("  voicify plugin --install <dir>         Install a plugin from directory")
 	fmt.Println("  voicify plugin --install-repo <url>    Install a plugin from git repository (repo must have main.go in root)")
 	fmt.Println("  voicify plugin --remove <plugin-name>  Remove a plugin")
-	fmt.Println("  voicify plugin --cleanup               Clean up invalid plugin installations")
 	return nil
 }
 
@@ -313,9 +306,6 @@ func listPlugins(pluginsDir string) error {
 
 	// Print summary
 	fmt.Printf("\nSummary: %d valid plugin(s), %d invalid plugin(s)\n", validCount, invalidCount)
-	if invalidCount > 0 {
-		fmt.Println("You can run 'voicify plugin --cleanup' to remove invalid plugin installations.")
-	}
 
 	return nil
 }
@@ -324,65 +314,6 @@ func listPlugins(pluginsDir string) error {
 func isTemporaryDirectory(name string) bool {
 	// Check for common patterns in temporary directory names
 	return strings.HasPrefix(name, "voicify-plugin-") && strings.Contains(name, "-")
-}
-
-// cleanupPlugins removes invalid plugin installations
-func cleanupPlugins(pluginsDir string) error {
-	fmt.Println("⏳ Cleaning up invalid plugin installations...")
-
-	entries, err := os.ReadDir(pluginsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Println("ℹ️ No plugins directory found.")
-			return nil
-		}
-		return fmt.Errorf("failed to read plugins directory: %w", err)
-	}
-
-	if len(entries) == 0 {
-		fmt.Println("ℹ️ No plugins to clean up.")
-		return nil
-	}
-
-	// Count removed directories
-	removedCount := 0
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		pluginDir := filepath.Join(pluginsDir, entry.Name())
-		mainSoPath := filepath.Join(pluginDir, "main.so")
-
-		// Check if it's a valid plugin installation
-		isValid := true
-
-		// Check for missing main.so
-		if _, err := os.Stat(mainSoPath); os.IsNotExist(err) {
-			isValid = false
-			fmt.Printf("  🗑️ Removing %s (missing main.so)...\n", entry.Name())
-		}
-
-		// Check for temporary directory
-		if isTemporaryDirectory(entry.Name()) {
-			isValid = false
-			fmt.Printf("  🗑️ Removing %s (temporary plugin directory)...\n", entry.Name())
-		}
-
-		// Remove invalid installation
-		if !isValid {
-			if err := os.RemoveAll(pluginDir); err != nil {
-				fmt.Printf("  ❌ Failed to remove %s: %v\n", entry.Name(), err)
-			} else {
-				fmt.Printf("  ✅ Removed %s\n", entry.Name())
-				removedCount++
-			}
-		}
-	}
-
-	fmt.Printf("\nCleanup complete: Removed %d invalid plugin installation(s).\n", removedCount)
-	return nil
 }
 
 // checkPluginCompatibility verifies that a plugin is compatible with the current version of Voicify
@@ -419,31 +350,64 @@ func installPlugin(srcDir string, pluginsDir string) error {
 		return fmt.Errorf("source path is not a directory: %s", srcDir)
 	}
 
-	// Get plugin name from directory name
+	// Get initial plugin name from directory name (will be replaced if we can extract from metadata)
 	pluginName := filepath.Base(srcDir)
-	destDir := filepath.Join(pluginsDir, pluginName)
 
-	// Check if plugin is already installed
-	if _, err := os.Stat(destDir); err == nil {
-		return fmt.Errorf("plugin %s is already installed", pluginName)
-	}
+	// Check if this is a temporary directory from a repo install
+	isTemp := isTemporaryDirectory(pluginName)
 
-	fmt.Printf("⏳ Installing plugin %s...\n", pluginName)
-
-	// Create plugin directory
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create plugin directory: %w", err)
-	}
+	fmt.Printf("⏳ Installing plugin from %s...\n", srcDir)
 
 	// Check if main.so exists in source directory
 	mainSoPath := filepath.Join(srcDir, "main.so")
 	if _, err := os.Stat(mainSoPath); os.IsNotExist(err) {
 		// Try to build the plugin
 		if err := buildPlugin(srcDir); err != nil {
-			// Clean up the destination directory on build failure
-			os.RemoveAll(destDir)
 			return fmt.Errorf("failed to build plugin: %w", err)
 		}
+	}
+
+	// Try to extract the actual plugin name from the built plugin
+	if extractedName, err := getPluginNameFromBuildResult(srcDir); err == nil && extractedName != "" {
+		// Use the extracted name instead of the directory name
+		pluginName = extractedName
+		fmt.Printf("📋 Using plugin name from metadata: %s\n", pluginName)
+	} else {
+		// If this is a temporary directory and we couldn't extract the name, try to derive a better name
+		if isTemp {
+			// For repo installs, if we can't get metadata, try to use the repo name
+			// Example: convert "voicify-plugin-temp-123456" to something meaningful
+			if strings.Contains(srcDir, "voicify-plugin-vscode") {
+				pluginName = "vscode"
+				fmt.Printf("📋 Using derived name for plugin: %s\n", pluginName)
+			} else if strings.Contains(srcDir, "github.com") {
+				// Try to extract the repo name from the path if it's a GitHub repo
+				parts := strings.Split(srcDir, "/")
+				for i, part := range parts {
+					if part == "github.com" && i+2 < len(parts) {
+						repoName := parts[i+2]
+						if strings.HasPrefix(repoName, "voicify-plugin-") {
+							pluginName = strings.TrimPrefix(repoName, "voicify-plugin-")
+						} else {
+							pluginName = repoName
+						}
+						fmt.Printf("📋 Using GitHub repo name for plugin: %s\n", pluginName)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Check if plugin is already installed
+	destDir := filepath.Join(pluginsDir, pluginName)
+	if _, err := os.Stat(destDir); err == nil {
+		return fmt.Errorf("plugin %s is already installed", pluginName)
+	}
+
+	// Create plugin directory
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create plugin directory: %w", err)
 	}
 
 	// Check plugin compatibility
@@ -544,14 +508,14 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		repoURL = repoURL + ".git"
 	}
 
-	// Extract the repository name from the URL (we'll use this temporarily)
-	repoName := filepath.Base(repoURL)
-	if strings.HasSuffix(repoName, ".git") {
-		repoName = repoName[:len(repoName)-4]
+	// Extract repository name for better plugin naming
+	originalRepoName := filepath.Base(repoURL)
+	if strings.HasSuffix(originalRepoName, ".git") {
+		originalRepoName = originalRepoName[:len(originalRepoName)-4]
 	}
 
 	// Create a temporary directory for the repository
-	tempDir, err := os.MkdirTemp("", "voicify-plugin-temp-*")
+	tempDir, err := os.MkdirTemp("", fmt.Sprintf("%s-*", originalRepoName))
 	if err != nil {
 		return fmt.Errorf("failed to create temporary directory: %w", err)
 	}
@@ -596,6 +560,9 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 			return fmt.Errorf("failed to change to source directory: %w", err)
 		}
 
+		// Extract the repository name from the URL for module name
+		repoName := originalRepoName
+
 		// Initialize go module
 		initCmd := exec.Command("go", "mod", "init", repoName)
 		var initStderr strings.Builder
@@ -621,54 +588,8 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		fmt.Println("✅ Module initialized")
 	}
 
-	// Build the plugin
-	fmt.Printf("⏳ Building plugin from %s...\n", repoURL)
-	if err := buildPlugin(tempDir); err != nil {
-		return fmt.Errorf("failed to build plugin: %w", err)
-	}
-
-	// Now extract the plugin name from the built plugin
-	pluginName, err := getPluginNameFromBuildResult(tempDir)
-	if err != nil {
-		return fmt.Errorf("failed to determine plugin name: %w", err)
-	}
-
-	// Check if plugin is already installed
-	destDir := filepath.Join(pluginsDir, pluginName)
-	if _, err := os.Stat(destDir); err == nil {
-		return fmt.Errorf("plugin %s is already installed at %s", pluginName, destDir)
-	}
-
-	// Create the destination directory
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create plugin directory %s: %w", destDir, err)
-	}
-
-	// Check plugin compatibility
-	mainSoPath := filepath.Join(tempDir, "main.so")
-	if err := checkPluginCompatibility(mainSoPath); err != nil {
-		// Clean up the destination directory if incompatible
-		os.RemoveAll(destDir)
-		return fmt.Errorf("plugin compatibility check failed: %w", err)
-	}
-
-	// Copy the built plugin to the destination
-	mainSoData, err := os.ReadFile(mainSoPath)
-	if err != nil {
-		// Clean up destination on failure
-		os.RemoveAll(destDir)
-		return fmt.Errorf("failed to read built plugin file: %w", err)
-	}
-
-	destPath := filepath.Join(destDir, "main.so")
-	if err := os.WriteFile(destPath, mainSoData, 0o644); err != nil {
-		// Clean up destination on failure
-		os.RemoveAll(destDir)
-		return fmt.Errorf("failed to write plugin file to destination: %w", err)
-	}
-
-	fmt.Printf("✅ Plugin %s installed successfully to %s\n", pluginName, destDir)
-	return nil
+	// Use installPlugin to handle the rest of the installation process
+	return installPlugin(tempDir, pluginsDir)
 }
 
 // getPluginNameFromBuildResult loads the plugin to get its actual name from metadata
