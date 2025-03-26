@@ -584,47 +584,57 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		return fmt.Errorf("repository does not contain a main.go file in the root directory - not a valid plugin")
 	}
 
-	// // Check if go.mod exists, create if not
-	// goModPath := filepath.Join(localPluginsDir, "go.mod")
-	// if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-	// 	fmt.Println("⏳ Initializing Go module...")
-	// 	// Change to the source directory
-	// 	currentDir, err := os.Getwd()
-	// 	if err != nil {
-	// 		return fmt.Errorf("failed to get current directory: %w", err)
-	// 	}
+	// Build the plugin
+	if err := buildPlugin(localPluginsDir); err != nil {
+		return fmt.Errorf("failed to build plugin: %w", err)
+	}
 
-	// 	if err := os.Chdir(localPluginsDir); err != nil {
-	// 		return fmt.Errorf("failed to change to source directory: %w", err)
-	// 	}
+	// Get the correct plugin name from the metadata
+	pluginName, err := getPluginNameFromBuildResult(localPluginsDir)
+	if err != nil {
+		// If we can't get the name from metadata, use the repo name as fallback
+		pluginName = repoName
+		logger.Warnf("Could not extract plugin name from metadata, using repo name: %v", err)
+	}
 
-	// 	// Initialize go module
-	// 	initCmd := exec.Command("go", "mod", "init", repoName)
-	// 	var initStderr strings.Builder
-	// 	initCmd.Stderr = &initStderr
-	// 	if err := initCmd.Run(); err != nil {
-	// 		os.Chdir(currentDir) // Make sure we change back even on error
-	// 		return fmt.Errorf("failed to initialize Go module: %w\n%s", err, initStderr.String())
-	// 	}
+	// Create destination directory with the correct plugin name
+	destDir := filepath.Join(pluginsDir, pluginName)
 
-	// 	// Make sure we get our dependencies
-	// 	tidyCmd := exec.Command("go", "mod", "tidy")
-	// 	var tidyStderr strings.Builder
-	// 	tidyCmd.Stderr = &tidyStderr
-	// 	if err := tidyCmd.Run(); err != nil {
-	// 		os.Chdir(currentDir) // Make sure we change back even on error
-	// 		return fmt.Errorf("failed to tidy Go module: %w\n%s", err, tidyStderr.String())
-	// 	}
+	// Check if plugin is already installed
+	if _, err := os.Stat(destDir); err == nil {
+		return fmt.Errorf("plugin %s is already installed at %s", pluginName, destDir)
+	}
 
-	// 	// Change back to original directory
-	// 	if err := os.Chdir(currentDir); err != nil {
-	// 		return fmt.Errorf("failed to change back to original directory: %w", err)
-	// 	}
-	// 	fmt.Println("✅ Module initialized")
-	// }
+	// Create the destination directory
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create plugin directory %s: %w", destDir, err)
+	}
 
-	// Now use installPlugin to finish the installation
-	return installPlugin(localPluginsDir, pluginsDir)
+	// Check plugin compatibility
+	mainSoPath := filepath.Join(localPluginsDir, "main.so")
+	if err := checkPluginCompatibility(mainSoPath); err != nil {
+		// Clean up the destination directory if incompatible
+		os.RemoveAll(destDir)
+		return fmt.Errorf("plugin compatibility check failed: %w", err)
+	}
+
+	// Copy the built plugin to the destination
+	mainSoData, err := os.ReadFile(mainSoPath)
+	if err != nil {
+		// Clean up destination on failure
+		os.RemoveAll(destDir)
+		return fmt.Errorf("failed to read built plugin file: %w", err)
+	}
+
+	destPath := filepath.Join(destDir, "main.so")
+	if err := os.WriteFile(destPath, mainSoData, 0o644); err != nil {
+		// Clean up destination on failure
+		os.RemoveAll(destDir)
+		return fmt.Errorf("failed to write plugin file to destination: %w", err)
+	}
+
+	fmt.Printf("✅ Plugin %s installed successfully to %s\n", pluginName, destDir)
+	return nil
 }
 
 // getPluginNameFromBuildResult loads the plugin to get its actual name from metadata
