@@ -1,4 +1,4 @@
-module github.com/dooshek/voicify // v0.1.0
+module github.com/dooshek/voicify // v0.1.1
 
 go 1.23.1
 
@@ -8,7 +8,7 @@ require (
 	github.com/gen2brain/malgo v0.11.23
 	github.com/go-vgo/robotgo v0.110.5
 	github.com/robotn/gohook v0.41.0
-	github.com/rs/zerolog v1.33.0
+	github.com/rs/zerolog v1.34.0
 	github.com/sashabaranov/go-openai v1.35.7
 	github.com/u2takey/ffmpeg-go v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -26,7 +26,7 @@ require (
 	github.com/kbinani/screenshot v0.0.0-20240820160931-a8a2c5d0e191 // indirect
 	github.com/lufia/plan9stats v0.0.0-20240909124753-873cd0166683 // indirect
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
-	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/otiai10/gosseract v2.2.1+incompatible // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
