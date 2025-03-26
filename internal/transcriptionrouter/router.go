@@ -16,7 +16,6 @@ import (
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/plugin"
 	"github.com/dooshek/voicify/internal/state"
-	defaultaction "github.com/dooshek/voicify/internal/transcriptionrouter/actions/default"
 	"github.com/dooshek/voicify/internal/types"
 )
 
@@ -58,16 +57,12 @@ type llmResponse struct {
 type Router struct {
 	actions     []types.PluginAction
 	llmProvider llm.Provider
-	defaultAct  types.PluginAction
 	promptCache string
 	pluginMgr   *plugin.Manager
 }
 
 func New(transcription string) *Router {
 	provider, _ := llm.NewProvider(state.Get().GetRouterProvider())
-
-	// Initialize default action
-	defaultAct := defaultaction.New(transcription)
 
 	// Create a slice to hold all actions
 	var actions []types.PluginAction
@@ -92,9 +87,6 @@ func New(transcription string) *Router {
 		logger.Errorf("Failed to initialize file operations: %v", err)
 	}
 
-	// Add default action
-	actions = append(actions, defaultAct)
-
 	// Sort actions by priority (higher priority first)
 	sort.Slice(actions, func(i, j int) bool {
 		return actions[i].GetMetadata().Priority > actions[j].GetMetadata().Priority
@@ -102,7 +94,6 @@ func New(transcription string) *Router {
 
 	r := &Router{
 		llmProvider: provider,
-		defaultAct:  defaultAct,
 		actions:     actions,
 		pluginMgr:   pluginMgr,
 	}
@@ -154,14 +145,14 @@ func (r *Router) Route(transcription string) error {
 
 	llmResp, err := r.analyzeWithLLM(transcription)
 	if err != nil {
-		logger.Error("LLM analysis failed, using default action", err)
-		return r.defaultAct.Execute(transcription)
+		logger.Error("LLM analysis failed", err)
+		return nil
 	}
 
 	if action := r.findAction(llmResp.Action); action != nil {
 		return action.Execute(llmResp.TranscriptionWithoutCommand)
 	}
-	return r.defaultAct.Execute(transcription)
+	return nil
 }
 
 func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
