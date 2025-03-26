@@ -21,7 +21,7 @@ type Manager struct {
 	mu          sync.RWMutex
 }
 
-// NewManager creates a new plugin manager
+// NewManager creates a new plugin managerls
 func NewManager(pluginsDir string) *Manager {
 	return &Manager{
 		plugins:     make([]types.VoicifyPlugin, 0),
