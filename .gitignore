@@ -9,3 +9,4 @@ IDEAS.md
 # Compiled plugin binaries
 *.so
 bin/*
+plugins/

@@ -634,6 +634,16 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 	}
 
 	fmt.Printf("✅ Plugin %s installed successfully to %s\n", pluginName, destDir)
+
+	// Clean up the local plugins directory
+	fmt.Printf("⏳ Cleaning up temporary %s directory...\n", localPluginsDir)
+	if err := os.RemoveAll(localPluginsDir); err != nil {
+		// Just log this error as a warning since the installation was successful
+		logger.Warnf("Warning: Failed to clean up local plugins directory: %v", err)
+	} else {
+		fmt.Printf("✅ Cleaned up temporary %s directory\n", localPluginsDir)
+	}
+
 	return nil
 }
 
