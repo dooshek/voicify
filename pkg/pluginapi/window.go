@@ -1,7 +1,7 @@
 package pluginapi
 
 import (
-	"github.com/dooshek/voicify/internal/windowdetect"
+	"github.com/dooshek/voicify/pkg/windowdetect"
 )
 
 // Window represents a window

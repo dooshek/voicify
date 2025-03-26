@@ -1,7 +1,7 @@
 package pluginapi
 
 import (
-	"github.com/dooshek/voicify/internal/clipboard"
+	"github.com/dooshek/voicify/pkg/clipboard"
 )
 
 // Clipboard is a wrapper around the clipboard package

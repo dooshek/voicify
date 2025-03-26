@@ -1,9 +1,9 @@
 package defaultaction
 
 import (
-	"github.com/dooshek/voicify/internal/clipboard"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/types"
+	"github.com/dooshek/voicify/pkg/clipboard"
 )
 
 // Name changed from Action to PluginAction to match interface

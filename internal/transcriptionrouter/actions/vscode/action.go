@@ -3,10 +3,10 @@ package vscode
 import (
 	"strings"
 
-	"github.com/dooshek/voicify/internal/clipboard"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/types"
-	"github.com/dooshek/voicify/internal/windowdetect"
+	"github.com/dooshek/voicify/pkg/clipboard"
+	"github.com/dooshek/voicify/pkg/windowdetect"
 )
 
 type PluginAction struct {

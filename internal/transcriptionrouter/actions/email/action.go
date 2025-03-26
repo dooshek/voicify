@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dooshek/voicify/internal/clipboard"
 	"github.com/dooshek/voicify/internal/llm"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/types"
+	"github.com/dooshek/voicify/pkg/clipboard"
 )
 
 type PluginAction struct {
