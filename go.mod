@@ -1,4 +1,4 @@
-module github.com/dooshek/voicify // v0.2.0
+module github.com/dooshek/voicify // v0.2.1
 
 go 1.23.1
 
