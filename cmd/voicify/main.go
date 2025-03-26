@@ -453,13 +453,6 @@ func installPlugin(srcDir string, pluginsDir string) error {
 		return fmt.Errorf("plugin compatibility check failed: %w", err)
 	}
 
-	// Remove main.so if it exists
-	if _, err := os.Stat(mainSoPath); err == nil {
-		if err := os.Remove(mainSoPath); err != nil {
-			return fmt.Errorf("failed to remove existing main.so: %w", err)
-		}
-	}
-
 	// Copy main.so to plugin directory
 	mainSoData, err := os.ReadFile(mainSoPath)
 	if err != nil {
@@ -591,44 +584,44 @@ func installPluginFromRepo(repoURL string, pluginsDir string) error {
 		return fmt.Errorf("repository does not contain a main.go file in the root directory - not a valid plugin")
 	}
 
-	// Check if go.mod exists, create if not
-	goModPath := filepath.Join(localPluginsDir, "go.mod")
-	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		fmt.Println("⏳ Initializing Go module...")
-		// Change to the source directory
-		currentDir, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
+	// // Check if go.mod exists, create if not
+	// goModPath := filepath.Join(localPluginsDir, "go.mod")
+	// if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+	// 	fmt.Println("⏳ Initializing Go module...")
+	// 	// Change to the source directory
+	// 	currentDir, err := os.Getwd()
+	// 	if err != nil {
+	// 		return fmt.Errorf("failed to get current directory: %w", err)
+	// 	}
 
-		if err := os.Chdir(localPluginsDir); err != nil {
-			return fmt.Errorf("failed to change to source directory: %w", err)
-		}
+	// 	if err := os.Chdir(localPluginsDir); err != nil {
+	// 		return fmt.Errorf("failed to change to source directory: %w", err)
+	// 	}
 
-		// Initialize go module
-		initCmd := exec.Command("go", "mod", "init", repoName)
-		var initStderr strings.Builder
-		initCmd.Stderr = &initStderr
-		if err := initCmd.Run(); err != nil {
-			os.Chdir(currentDir) // Make sure we change back even on error
-			return fmt.Errorf("failed to initialize Go module: %w\n%s", err, initStderr.String())
-		}
+	// 	// Initialize go module
+	// 	initCmd := exec.Command("go", "mod", "init", repoName)
+	// 	var initStderr strings.Builder
+	// 	initCmd.Stderr = &initStderr
+	// 	if err := initCmd.Run(); err != nil {
+	// 		os.Chdir(currentDir) // Make sure we change back even on error
+	// 		return fmt.Errorf("failed to initialize Go module: %w\n%s", err, initStderr.String())
+	// 	}
 
-		// Make sure we get our dependencies
-		tidyCmd := exec.Command("go", "mod", "tidy")
-		var tidyStderr strings.Builder
-		tidyCmd.Stderr = &tidyStderr
-		if err := tidyCmd.Run(); err != nil {
-			os.Chdir(currentDir) // Make sure we change back even on error
-			return fmt.Errorf("failed to tidy Go module: %w\n%s", err, tidyStderr.String())
-		}
+	// 	// Make sure we get our dependencies
+	// 	tidyCmd := exec.Command("go", "mod", "tidy")
+	// 	var tidyStderr strings.Builder
+	// 	tidyCmd.Stderr = &tidyStderr
+	// 	if err := tidyCmd.Run(); err != nil {
+	// 		os.Chdir(currentDir) // Make sure we change back even on error
+	// 		return fmt.Errorf("failed to tidy Go module: %w\n%s", err, tidyStderr.String())
+	// 	}
 
-		// Change back to original directory
-		if err := os.Chdir(currentDir); err != nil {
-			return fmt.Errorf("failed to change back to original directory: %w", err)
-		}
-		fmt.Println("✅ Module initialized")
-	}
+	// 	// Change back to original directory
+	// 	if err := os.Chdir(currentDir); err != nil {
+	// 		return fmt.Errorf("failed to change back to original directory: %w", err)
+	// 	}
+	// 	fmt.Println("✅ Module initialized")
+	// }
 
 	// Now use installPlugin to finish the installation
 	return installPlugin(localPluginsDir, pluginsDir)
