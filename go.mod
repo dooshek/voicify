@@ -1,6 +1,6 @@
 module github.com/dooshek/voicify // v0.2.1
 
-go 1.23.1
+go 1.23.7
 
 require (
 	github.com/MarinX/keylogger v0.0.0-20240620105846-48ca9d01f566
