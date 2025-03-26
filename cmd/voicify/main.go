@@ -453,6 +453,13 @@ func installPlugin(srcDir string, pluginsDir string) error {
 		return fmt.Errorf("plugin compatibility check failed: %w", err)
 	}
 
+	// Remove main.so if it exists
+	if _, err := os.Stat(mainSoPath); err == nil {
+		if err := os.Remove(mainSoPath); err != nil {
+			return fmt.Errorf("failed to remove existing main.so: %w", err)
+		}
+	}
+
 	// Copy main.so to plugin directory
 	mainSoData, err := os.ReadFile(mainSoPath)
 	if err != nil {
