@@ -16,6 +16,7 @@ import (
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/plugin"
 	"github.com/dooshek/voicify/internal/state"
+	defaultaction "github.com/dooshek/voicify/internal/transcriptionrouter/actions/default"
 	"github.com/dooshek/voicify/internal/types"
 )
 
@@ -65,6 +66,9 @@ type Router struct {
 func New(transcription string) *Router {
 	provider, _ := llm.NewProvider(state.Get().GetRouterProvider())
 
+	// Initialize default action
+	defaultAct := defaultaction.New(transcription)
+
 	// Create a slice to hold all actions
 	var actions []types.PluginAction
 
@@ -88,6 +92,9 @@ func New(transcription string) *Router {
 		logger.Errorf("Failed to initialize file operations: %v", err)
 	}
 
+	// Add default action
+	actions = append(actions, defaultAct)
+
 	// Sort actions by priority (higher priority first)
 	sort.Slice(actions, func(i, j int) bool {
 		return actions[i].GetMetadata().Priority > actions[j].GetMetadata().Priority
@@ -95,6 +102,7 @@ func New(transcription string) *Router {
 
 	r := &Router{
 		llmProvider: provider,
+		defaultAct:  defaultAct,
 		actions:     actions,
 		pluginMgr:   pluginMgr,
 	}

@@ -2,7 +2,6 @@ package audio
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +13,7 @@ import (
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/transcriber"
+	"github.com/dooshek/voicify/pkg/wav"
 	"github.com/gen2brain/malgo"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
@@ -157,7 +157,7 @@ func (r *Recorder) record() {
 	wavFilename := fmt.Sprintf("recording_%s.wav", timestamp)
 	oggFilename := strings.TrimSuffix(wavFilename, ".wav") + ".ogg"
 
-	wavData, err := ConvertPCMToWAV(audioBuffer.Bytes(), channels, sampleRate)
+	wavData, err := wav.ConvertPCMToWAV(audioBuffer.Bytes(), channels, sampleRate)
 	if err != nil {
 		logger.Error("Error converting to WAV", err)
 		return
@@ -237,26 +237,4 @@ func (r *Recorder) updateRecordingTime() {
 			}
 		}
 	}
-}
-
-func ConvertPCMToWAV(pcmData []byte, channels int, sampleRate int) ([]byte, error) {
-	var buffer bytes.Buffer
-
-	// Write WAV header
-	binary.Write(&buffer, binary.LittleEndian, []byte("RIFF"))
-	binary.Write(&buffer, binary.LittleEndian, uint32(len(pcmData)+36))
-	binary.Write(&buffer, binary.LittleEndian, []byte("WAVE"))
-	binary.Write(&buffer, binary.LittleEndian, []byte("fmt "))
-	binary.Write(&buffer, binary.LittleEndian, uint32(16))
-	binary.Write(&buffer, binary.LittleEndian, uint16(1))
-	binary.Write(&buffer, binary.LittleEndian, uint16(channels))
-	binary.Write(&buffer, binary.LittleEndian, uint32(sampleRate))
-	binary.Write(&buffer, binary.LittleEndian, uint32(sampleRate*channels*2))
-	binary.Write(&buffer, binary.LittleEndian, uint16(channels*2))
-	binary.Write(&buffer, binary.LittleEndian, uint16(16))
-	binary.Write(&buffer, binary.LittleEndian, []byte("data"))
-	binary.Write(&buffer, binary.LittleEndian, uint32(len(pcmData)))
-	buffer.Write(pcmData)
-
-	return buffer.Bytes(), nil
 }
