@@ -1,0 +1,14 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## User defined commands
+
+If user is entering exactly one of command "debug", "debug remove", "commit":
+ - [debug] - Propose code to output helpful debug info to stdout. Next user message will be debug output to analyze.
+ - [debug remove] - Remove the previously added debug code.
+ - [commit] - Return only these bash commands:
+   - `git add "files changed in this thread"` - One line per changed file
+   - `git commit -m "[[COMMIT MESSAGE]]"` - Use conventional commits with prefix (chore/fix/refactor/docs). Explain WHY not WHAT changed.
+   - Only commit once until user issues another commit command.
