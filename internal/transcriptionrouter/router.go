@@ -120,12 +120,23 @@ func (r *Router) cachePromptTemplate() error {
 }
 
 func (r *Router) findAction(actionName string) types.PluginAction {
-	target := strings.ToLower(actionName)
+	logger.Debugf("Looking for action with name: %s", actionName)
 	for _, a := range r.actions {
-		if strings.Contains(strings.ToLower(a.GetMetadata().Name), target) {
+		meta := a.GetMetadata()
+		if strings.EqualFold(meta.Name, actionName) {
+			logger.Debugf("Found matching action: %s", meta.Name)
 			return a
 		}
+		if meta.LLMCommands != nil {
+			for _, cmd := range *meta.LLMCommands {
+				if strings.EqualFold(cmd, actionName) {
+					logger.Debugf("Found matching action via LLM command: %s => %s", actionName, meta.Name)
+					return a
+				}
+			}
+		}
 	}
+	logger.Debugf("No action found for: %s", actionName)
 	return nil
 }
 
@@ -138,9 +149,24 @@ func (r *Router) Route(transcription string) error {
 			logger.Debugf("Executing action: %s", a.GetMetadata().Name)
 
 			if err := a.Execute(transcription); err != nil {
-				logger.Errorf("Action[%s]: failed to execute: %v", err, a.GetMetadata().Name)
+				logger.Errorf("Action %s failed to execute", err, a.GetMetadata().Name)
 			}
 		}
+	}
+
+	// Check if there are any actions with LLMCommands
+	hasLLMActions := false
+	for _, a := range r.actions {
+		if meta := a.GetMetadata(); meta.LLMCommands != nil && len(*meta.LLMCommands) > 0 {
+			hasLLMActions = true
+			break
+		}
+	}
+
+	// Skip LLM analysis if there are no actions with LLMCommands
+	if !hasLLMActions {
+		logger.Debugf("Skipping LLM analysis - no actions with LLMCommands defined")
+		return nil
 	}
 
 	llmResp, err := r.analyzeWithLLM(transcription)
@@ -149,18 +175,32 @@ func (r *Router) Route(transcription string) error {
 		return nil
 	}
 
+	logger.Debugf("LLM suggested action: %s", llmResp.Action)
 	if action := r.findAction(llmResp.Action); action != nil {
-		return action.Execute(llmResp.TranscriptionWithoutCommand)
+		logger.Debugf("Executing LLM-selected action: %s with transcription: %s",
+			action.GetMetadata().Name, sanitizeLog(llmResp.TranscriptionWithoutCommand))
+		err := action.Execute(llmResp.TranscriptionWithoutCommand)
+		if err != nil {
+			logger.Errorf("LLM-selected action %s failed", err, action.GetMetadata().Name)
+		} else {
+			logger.Debugf("Action %s: LLM-selected action completed successfully", action.GetMetadata().Name)
+		}
+		return err
 	}
+	logger.Debugf("No action executed for this transcription")
 	return nil
 }
 
 func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
 	actionsDoc := strings.Builder{}
+
+	logger.Debugf("Building LLM actions documentation with %d available actions", len(r.actions))
 	for _, a := range r.actions {
 		if meta := a.GetMetadata(); meta.LLMCommands != nil && len(*meta.LLMCommands) > 0 {
+			commandsStr := strings.Join(*meta.LLMCommands, "|")
+			logger.Debugf("Adding action to LLM prompt: %s (commands: %s)", meta.Name, commandsStr)
 			actionsDoc.WriteString(fmt.Sprintf("- %s: %s (commands: %s)\n",
-				meta.Name, meta.Description, strings.Join(*meta.LLMCommands, "|")))
+				meta.Name, meta.Description, commandsStr))
 		}
 	}
 
@@ -173,16 +213,23 @@ func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
 		Temperature: float32(state.Get().Config.LLM.Router.Temperature),
 	}
 
+	logger.Debugf("Sending completion request with model: %s", req.Model)
 	response, err := r.llmProvider.Completion(context.Background(), req)
 	if err != nil {
 		return nil, fmt.Errorf("LLM completion failed: %w", err)
 	}
+
+	logger.Debugf("Received LLM response: %s", sanitizeLog(response))
 
 	var llmResp llmResponse
 	if err := json.Unmarshal([]byte(response), &llmResp); err != nil {
 		logger.Error(fmt.Sprintf("Failed to parse LLM response: %s", sanitizeLog(response)), err)
 		return nil, fmt.Errorf("LLM response parsing failed: %w", err)
 	}
+
+	logger.Debugf("LLM response parsed successfully: action=%s, transcription=%s",
+		llmResp.Action, sanitizeLog(llmResp.TranscriptionWithoutCommand))
+
 	return &llmResp, nil
 }
 

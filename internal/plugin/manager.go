@@ -30,62 +30,81 @@ func NewManager(pluginsDir string) *Manager {
 	}
 }
 
-// LoadPlugins loads all plugins from the plugins directory
+// LoadPlugins loads plugins from the plugins directory
 func (m *Manager) LoadPlugins() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Create plugins directory if it doesn't exist
+	// Ensure plugins directory exists
 	if err := os.MkdirAll(m.pluginsDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create plugins directory: %w", err)
 	}
 
-	// Get all plugin directories
+	// Load plugins
 	entries, err := os.ReadDir(m.pluginsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read plugins directory: %w", err)
 	}
 
+	logger.Debugf("Scanning for plugins in %s", m.pluginsDir)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 
 		pluginPath := filepath.Join(m.pluginsDir, entry.Name())
+		mainSoPath := filepath.Join(pluginPath, "main.so")
 
-		// Check if we've already loaded this plugin
-		if m.loadedPaths[pluginPath] {
+		// Skip if plugin is already loaded
+		if m.loadedPaths[mainSoPath] {
+			logger.Debugf("Plugin already loaded: %s", mainSoPath)
 			continue
 		}
 
-		// Look for the main.so file in the plugin directory
-		mainPath := filepath.Join(pluginPath, "main.so")
-		if _, err := os.Stat(mainPath); os.IsNotExist(err) {
-			logger.Errorf("Plugin %s missing main.so file", err, entry.Name())
+		// Skip if main.so doesn't exist
+		if _, err := os.Stat(mainSoPath); os.IsNotExist(err) {
+			logger.Debugf("Skipping directory %s (no main.so found)", entry.Name())
 			continue
 		}
 
-		// Load the plugin
-		p, err := m.loadPlugin(mainPath)
+		logger.Debugf("Loading plugin from: %s", mainSoPath)
+		plugin, err := m.loadPlugin(mainSoPath)
 		if err != nil {
-			logger.Errorf("Failed to load plugin %s: %v", err, entry.Name())
+			logger.Warnf("Failed to load plugin %s: %v", entry.Name(), err)
 			continue
 		}
 
 		// Initialize the plugin
-		if err := p.Initialize(); err != nil {
-			logger.Errorf("Failed to initialize plugin %s", err, entry.Name())
+		if err := plugin.Initialize(); err != nil {
+			logger.Warnf("Failed to initialize plugin %s: %v", entry.Name(), err)
 			continue
 		}
 
-		// Add the plugin to our list
-		m.plugins = append(m.plugins, p)
-		m.loadedPaths[pluginPath] = true
+		// Add to loaded plugins
+		m.plugins = append(m.plugins, plugin)
+		m.loadedPaths[mainSoPath] = true
 
-		metadata := p.GetMetadata()
-		logger.Infof("Loaded plugin: %s v%s by %s", metadata.Name, metadata.Version, metadata.Author)
+		// Log successful plugin load
+		meta := plugin.GetMetadata()
+		logger.Infof("Loaded plugin: %s v%s by %s", meta.Name, meta.Version, meta.Author)
+
+		// Debug each action provided by the plugin
+		dummyTranscription := "test transcription for checking actions"
+		actions := plugin.GetActions(dummyTranscription)
+		logger.Debugf("Plugin %s provides %d actions:", meta.Name, len(actions))
+		for i, action := range actions {
+			actionMeta := action.GetMetadata()
+			var commands string
+			if actionMeta.LLMCommands != nil {
+				commands = fmt.Sprintf("LLM Commands: %v", *actionMeta.LLMCommands)
+			} else {
+				commands = "No LLM Commands"
+			}
+			logger.Debugf("  Action[%d]: %s - %s (%s)", i+1, actionMeta.Name, actionMeta.Description, commands)
+		}
 	}
 
+	logger.Infof("Loaded %d plugin(s)", len(m.plugins))
 	return nil
 }
 
@@ -194,12 +213,22 @@ type actionAdapter struct {
 // Execute calls the Execute method on the pluginapi action
 func (a *actionAdapter) Execute(transcription string) error {
 	// Use reflection to call Execute
+	actionName := a.GetMetadata().Name
+	logger.Debugf("Plugin action %s: starting Execute with transcription: %s", actionName, transcription)
+
 	execute := reflect.ValueOf(a.apiAction).MethodByName("Execute")
 	args := []reflect.Value{reflect.ValueOf(transcription)}
+
+	logger.Debugf("Plugin action %s: calling Execute method", actionName)
 	results := execute.Call(args)
+
 	if !results[0].IsNil() {
-		return results[0].Interface().(error)
+		err := results[0].Interface().(error)
+		logger.Debugf("Plugin action %s: Execute returned error: %v", actionName, err)
+		return err
 	}
+
+	logger.Debugf("Plugin action %s: Execute completed successfully", actionName)
 	return nil
 }
 
