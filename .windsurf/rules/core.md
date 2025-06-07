@@ -1,8 +1,7 @@
 ---
-description: 
-globs: 
-alwaysApply: true
+trigger: always_on
 ---
+
 ## Core Rules
 
 You have two modes of operation:
