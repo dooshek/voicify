@@ -1,6 +1,7 @@
 package keyboard
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -23,7 +24,7 @@ type ModifierState struct {
 
 // KeyboardMonitor interface defines the contract for keyboard monitoring implementations
 type KeyboardMonitor interface {
-	Start() error
+	Start(ctx context.Context) error
 	Stop()
 }
 

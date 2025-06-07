@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -207,6 +208,10 @@ func main() {
 	logger.Infof("Press %s to start/stop recording", startMessage)
 	logger.Info("💡 Note: You can run `voicify --wizard` to change the key combination")
 
+	// Create context for clean shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Set up signal handling for cleanup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -215,13 +220,14 @@ func main() {
 	go func() {
 		sig := <-sigChan
 		logger.Infof("Received signal %v, shutting down...", sig)
+		cancel() // Cancel context to stop keyboard monitoring
 		if err := fileOps.CleanupPID(); err != nil {
 			logger.Error("Failed to cleanup PID file", err)
 		}
 		os.Exit(0)
 	}()
 
-	monitor.Start()
+	monitor.Start(ctx)
 }
 
 // handlePluginCommand implements plugin management functionality

@@ -1,6 +1,7 @@
 package keyboard
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -27,7 +28,7 @@ func NewWaylandMonitor(keyConfig types.KeyBinding) (*WaylandMonitor, error) {
 	}, nil
 }
 
-func (w *WaylandMonitor) Start() error {
+func (w *WaylandMonitor) Start(ctx context.Context) error {
 	keyboards := keylogger.FindAllKeyboardDevices()
 
 	if len(keyboards) == 0 {
@@ -90,6 +91,11 @@ func (w *WaylandMonitor) Start() error {
 					w.modifierState.Super = false
 				}
 			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 	}
 	return nil
