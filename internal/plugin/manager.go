@@ -86,7 +86,7 @@ func (m *Manager) LoadPlugins() error {
 
 		// Log successful plugin load
 		meta := plugin.GetMetadata()
-		logger.Infof("Loaded plugin: %s v%s by %s", meta.Name, meta.Version, meta.Author)
+		logger.Debugf("Loaded plugin: %s v%s by %s", meta.Name, meta.Version, meta.Author)
 
 		// Debug each action provided by the plugin
 		dummyTranscription := "test transcription for checking actions"
