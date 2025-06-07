@@ -6,12 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/MarinX/keylogger"
-	"github.com/dooshek/voicify/internal/keyboard"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/types"
 	"github.com/fatih/color"
-	hook "github.com/robotn/gohook"
 )
 
 type KeyPress struct {
@@ -35,11 +32,8 @@ func RunWizard() error {
 	green := color.New(color.FgGreen)
 	yellow := color.New(color.FgYellow)
 
-	bold.Println("\n🎙️  Welcome to Voicify Configuration Wizard!")
+	bold.Println("\n  Welcome to Voicify Configuration Wizard!")
 	fmt.Println("\nThis wizard will help you set up your recording shortcut.")
-
-	var keyPress KeyPress
-	var err error
 
 	for {
 		cyan.Println("\nPress your key combination (Ctrl, Alt, Shift, Super + key)...")
@@ -47,10 +41,30 @@ func RunWizard() error {
 		fmt.Println("Only a-z, 0-9, and `[]\\;',./-= keys are allowed.")
 		fmt.Println("(Press Ctrl+C to cancel)")
 
-		keyPress, err = captureKeys()
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter your key combination: ")
+		line, err := reader.ReadString('\n')
 		if err != nil {
-			logger.Error("Failed to capture key", err)
+			logger.Error("Failed to read input", err)
 			return err
+		}
+
+		line = strings.TrimSpace(line)
+		parts := strings.Split(line, "+")
+		var keyPress KeyPress
+		for _, part := range parts {
+			switch strings.ToLower(part) {
+			case "ctrl":
+				keyPress.Ctrl = true
+			case "shift":
+				keyPress.Shift = true
+			case "alt":
+				keyPress.Alt = true
+			case "super":
+				keyPress.Super = true
+			default:
+				keyPress.Key = part
+			}
 		}
 
 		if keyPress.Key == "" {
@@ -64,7 +78,7 @@ func RunWizard() error {
 		fmt.Println()
 
 		fmt.Print("\nDo you want to use this shortcut? [Y/n]: ")
-		reader := bufio.NewReader(os.Stdin)
+		reader = bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			logger.Error("Failed to read input", err)
@@ -122,7 +136,7 @@ func RunWizard() error {
 			return err
 		}
 
-		green.Println("\n✅ Configuration saved successfully!")
+		green.Println("\n Configuration saved successfully!")
 		fmt.Print("Your shortcut is: ")
 		printKeyCombination(config.RecordKey, false)
 		fmt.Println("\nYou can now use this shortcut to start/stop recording.")
@@ -156,174 +170,4 @@ func printKeyCombination(combo types.KeyCombo, clearLine bool) {
 		parts = append(parts, strings.ToUpper(key))
 	}
 	fmt.Print(strings.Join(parts, " + "))
-}
-
-func captureKeys() (KeyPress, error) {
-	if strings.ToLower(os.Getenv("XDG_SESSION_TYPE")) == "x11" {
-		return captureX11Keys()
-	}
-	return captureWaylandKeys()
-}
-
-func captureX11Keys() (KeyPress, error) {
-	evChan := hook.Start()
-	defer hook.End()
-
-	var keyPress KeyPress
-	done := make(chan bool)
-	modifierUpdates := make(chan bool)
-
-	// Goroutine to handle modifier updates
-	go func() {
-		for range modifierUpdates {
-			printKeyCombination(keyPress, true)
-		}
-	}()
-
-	// Main event loop
-	go func() {
-		for ev := range evChan {
-			code := uint16(ev.Rawcode)
-
-			if ev.Kind == hook.KeyHold || ev.Kind == hook.KeyDown {
-				switch code {
-				case keyboard.X11LeftControl, keyboard.X11RightControl:
-					keyPress.Ctrl = true
-					modifierUpdates <- true
-				case keyboard.X11LeftShift, keyboard.X11RightShift:
-					keyPress.Shift = true
-					modifierUpdates <- true
-				case keyboard.X11LeftAlt, keyboard.X11RightAlt:
-					keyPress.Alt = true
-					modifierUpdates <- true
-				case keyboard.X11Super:
-					keyPress.Super = true
-					modifierUpdates <- true
-				default:
-					// Try checking using X11KeyMap lookup
-					if key, ok := keyboard.X11KeyMap[code]; ok {
-						keyPress.Key = key
-						done <- true
-						return
-					}
-
-					// Try using ASCII char value as fallback
-					if ev.Keychar >= 32 && ev.Keychar <= 126 {
-						keyPress.Key = string(ev.Keychar)
-						done <- true
-						return
-					}
-
-					// Last resort fallback - for alphabetic keys
-					if code >= 97 && code <= 122 {
-						// ASCII codes for a-z
-						keyPress.Key = string(rune(code))
-						done <- true
-						return
-					}
-				}
-			} else if ev.Kind == hook.KeyUp {
-				switch code {
-				case keyboard.X11LeftControl, keyboard.X11RightControl:
-					keyPress.Ctrl = false
-					modifierUpdates <- true
-				case keyboard.X11LeftShift, keyboard.X11RightShift:
-					keyPress.Shift = false
-					modifierUpdates <- true
-				case keyboard.X11LeftAlt, keyboard.X11RightAlt:
-					keyPress.Alt = false
-					modifierUpdates <- true
-				case keyboard.X11Super:
-					keyPress.Super = false
-					modifierUpdates <- true
-				}
-			}
-		}
-	}()
-
-	<-done
-	close(modifierUpdates)
-	return keyPress, nil
-}
-
-func captureWaylandKeys() (KeyPress, error) {
-	keyboards := keylogger.FindAllKeyboardDevices()
-	if len(keyboards) == 0 {
-		err := fmt.Errorf("no keyboard devices found")
-		logger.Error("No keyboard devices found", err)
-		return KeyPress{}, err
-	}
-
-	kbd, err := keylogger.New(keyboards[0])
-	if err != nil {
-		err = fmt.Errorf("failed to initialize keylogger: %w", err)
-		logger.Error("Failed to initialize keylogger", err)
-		return KeyPress{}, err
-	}
-	defer kbd.Close()
-
-	events := kbd.Read()
-	var keyPress KeyPress
-	done := make(chan bool)
-	modifierUpdates := make(chan bool)
-
-	// Goroutine to handle modifier updates
-	go func() {
-		for range modifierUpdates {
-			printKeyCombination(keyPress, true)
-		}
-	}()
-
-	// Main event loop
-	go func() {
-		for e := range events {
-			if e.Type == keylogger.EvKey {
-				code := uint16(e.Code)
-
-				if e.KeyPress() {
-					switch code {
-					case keyboard.WaylandLeftControl, keyboard.WaylandRightControl:
-						keyPress.Ctrl = true
-						modifierUpdates <- true
-					case keyboard.WaylandLeftShift, keyboard.WaylandRightShift:
-						keyPress.Shift = true
-						modifierUpdates <- true
-					case keyboard.WaylandLeftAlt, keyboard.WaylandRightAlt:
-						keyPress.Alt = true
-						modifierUpdates <- true
-					case keyboard.WaylandSuper:
-						keyPress.Super = true
-						modifierUpdates <- true
-					default:
-						// Bezpośrednie sprawdzenie z mapy wayland
-						if key, ok := keyboard.WaylandKeyMap[code]; ok {
-							keyPress.Key = key
-							done <- true
-							return
-						}
-
-					}
-				} else if e.KeyRelease() {
-					switch code {
-					case keyboard.WaylandLeftControl, keyboard.WaylandRightControl:
-						keyPress.Ctrl = false
-						modifierUpdates <- true
-					case keyboard.WaylandLeftShift, keyboard.WaylandRightShift:
-						keyPress.Shift = false
-						modifierUpdates <- true
-					case keyboard.WaylandLeftAlt, keyboard.WaylandRightAlt:
-						keyPress.Alt = false
-						modifierUpdates <- true
-					case keyboard.WaylandSuper:
-						keyPress.Super = false
-						modifierUpdates <- true
-					}
-				}
-			}
-		}
-	}()
-
-	<-done
-	close(modifierUpdates)
-	return keyPress, nil
 }

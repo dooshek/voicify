@@ -7,7 +7,6 @@ require (
 	github.com/fatih/color v1.16.0
 	github.com/gen2brain/malgo v0.11.23
 	github.com/go-vgo/robotgo v0.110.5
-	github.com/robotn/gohook v0.41.0
 	github.com/rs/zerolog v1.34.0
 	github.com/sashabaranov/go-openai v1.35.7
 	github.com/u2takey/ffmpeg-go v0.5.0
