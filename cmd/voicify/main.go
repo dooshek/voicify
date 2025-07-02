@@ -20,27 +20,54 @@ import (
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/state"
+	"github.com/dooshek/voicify/internal/tts"
 	"github.com/dooshek/voicify/internal/types"
 	"github.com/dooshek/voicify/pkg/pluginapi"
 )
 
 func init() {
-	// Set custom usage message to show -- prefix
+	// Set custom usage message to show -- prefix and all commands
 	flag.Usage = func() {
 		out := flag.CommandLine.Output()
-		fmt.Fprintf(out, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(out, "Voicify - Voice-controlled text automation\n\n")
+		fmt.Fprintf(out, "USAGE:\n")
+		fmt.Fprintf(out, "  voicify [OPTIONS]\n")
+		fmt.Fprintf(out, "  voicify plugin [PLUGIN_OPTIONS]\n")
+		fmt.Fprintf(out, "\n")
+
+		fmt.Fprintf(out, "COMMANDS:\n")
+		fmt.Fprintf(out, "  (default)    Start voice recording daemon\n")
+		fmt.Fprintf(out, "  plugin       Manage plugins\n")
+		fmt.Fprintf(out, "\n")
+
+		fmt.Fprintf(out, "OPTIONS:\n")
 		flag.VisitAll(func(f *flag.Flag) {
 			fmt.Fprintf(out, "  --%s", f.Name)
 			name, usage := flag.UnquoteUsage(f)
 			if len(name) > 0 {
 				fmt.Fprintf(out, " %s", name)
 			}
-			fmt.Fprintf(out, "\n    \t%s", usage)
+			fmt.Fprintf(out, "\n        %s", usage)
 			if f.DefValue != "" && f.DefValue != "false" {
 				fmt.Fprintf(out, " (default %q)", f.DefValue)
 			}
 			fmt.Fprintf(out, "\n")
 		})
+
+		fmt.Fprintf(out, "\nPLUGIN COMMANDS:\n")
+		fmt.Fprintf(out, "  voicify plugin --list                  List installed plugins\n")
+		fmt.Fprintf(out, "  voicify plugin --install <dir>         Install a plugin from directory\n")
+		fmt.Fprintf(out, "  voicify plugin --install-repo <url>    Install a plugin from git repository\n")
+		fmt.Fprintf(out, "  voicify plugin --remove <plugin-name>  Remove a plugin\n")
+		fmt.Fprintf(out, "  voicify plugin --cleanup               Clean up invalid plugin installations\n")
+
+		fmt.Fprintf(out, "\nEXAMPLES:\n")
+		fmt.Fprintf(out, "  voicify                                 Start voicify daemon\n")
+		fmt.Fprintf(out, "  voicify --wizard                        Run configuration wizard\n")
+		fmt.Fprintf(out, "  voicify --log-level debug               Start with debug logging\n")
+		fmt.Fprintf(out, "  voicify plugin --list                   List installed plugins\n")
+		fmt.Fprintf(out, "  voicify plugin --install ./my-plugin    Install plugin from directory\n")
+		fmt.Fprintf(out, "\n")
 	}
 }
 
@@ -154,6 +181,24 @@ func main() {
 
 	// Initialize global state with the entire config
 	state.Init(cfg)
+
+	// Initialize TTS manager if configuration is available
+	var ttsManager *tts.Manager
+	if cfg.LLM.Keys.OpenAIKey != "" {
+		ttsConfig := cfg.GetTTSConfig()
+		var err error
+		ttsManager, err = tts.NewManager(ttsConfig, cfg.LLM.Keys.OpenAIKey)
+		if err != nil {
+			logger.Warnf("Failed to initialize TTS manager: %v", err)
+			logger.Infof("TTS functionality will be disabled. Check your OpenAI API key configuration.")
+		} else {
+			logger.Infof("✨ TTS initialized: %s with voice '%s'", ttsManager.GetProviderName(), ttsConfig.Voice)
+			// Add TTS manager to global state
+			state.Get().SetTTSManager(ttsManager)
+		}
+	} else {
+		logger.Debugf("TTS disabled: No OpenAI API key configured")
+	}
 
 	// Update monitor creation to not pass API key
 	monitor, err := keyboard.CreateMonitor(state.Get().Config.RecordKey)

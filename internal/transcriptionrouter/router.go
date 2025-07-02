@@ -62,7 +62,23 @@ type Router struct {
 }
 
 func New(transcription string) *Router {
-	provider, _ := llm.NewProvider(state.Get().GetRouterProvider())
+	routerProvider := state.Get().GetRouterProvider()
+	logger.Debugf("Router: Initializing with provider: '%s'", routerProvider)
+
+	var provider llm.Provider
+	var providerErr error
+
+	// Only try to create LLM provider if router provider is configured
+	if string(routerProvider) != "" {
+		provider, providerErr = llm.NewProvider(routerProvider)
+		if providerErr != nil {
+			logger.Warnf("Router: Failed to create LLM provider for '%s': %v", routerProvider, providerErr)
+		} else {
+			logger.Debugf("Router: LLM provider created successfully for '%s'", routerProvider)
+		}
+	} else {
+		logger.Infof("Router: No LLM router provider configured - LLM analysis will be skipped")
+	}
 
 	// Create a slice to hold all actions
 	var actions []types.PluginAction
@@ -82,6 +98,7 @@ func New(transcription string) *Router {
 			// Get actions from all plugins
 			pluginActions := pluginMgr.GetAllActions(transcription)
 			actions = append(actions, pluginActions...)
+			logger.Debugf("Router: Loaded %d plugin actions", len(pluginActions))
 		}
 	} else {
 		logger.Errorf("Failed to initialize file operations: %v", err)
@@ -92,15 +109,26 @@ func New(transcription string) *Router {
 		return actions[i].GetMetadata().Priority > actions[j].GetMetadata().Priority
 	})
 
+	logger.Debugf("Router: Total actions loaded: %d", len(actions))
+	if len(actions) == 0 {
+		logger.Infof("Router: No plugin actions found - only basic routing will be available")
+	}
+
 	r := &Router{
 		llmProvider: provider,
 		actions:     actions,
 		pluginMgr:   pluginMgr,
 	}
 
-	if err := r.cachePromptTemplate(); err != nil {
-		logger.Error("Failed to cache prompt template", err)
+	// Only cache prompt template if we have a working LLM provider
+	if provider != nil {
+		if err := r.cachePromptTemplate(); err != nil {
+			logger.Error("Failed to cache prompt template", err)
+		}
+	} else {
+		logger.Debugf("Router: Skipping prompt template caching - no LLM provider available")
 	}
+
 	return r
 }
 
@@ -141,34 +169,45 @@ func (r *Router) findAction(actionName string) types.PluginAction {
 }
 
 func (r *Router) Route(transcription string) error {
-	logger.Debugf("Routing transcription: %s", sanitizeLog(transcription))
+	logger.Debugf("Router: Starting routing for transcription: %s", sanitizeLog(transcription))
 
 	// Run first actions that has LLMAction set to false
+	nonLLMActionsExecuted := 0
 	for _, a := range r.actions {
 		if a.GetMetadata().LLMCommands == nil || len(*a.GetMetadata().LLMCommands) == 0 {
-			logger.Debugf("Executing action: %s", a.GetMetadata().Name)
+			logger.Debugf("Router: Executing non-LLM action: %s", a.GetMetadata().Name)
+			nonLLMActionsExecuted++
 
 			if err := a.Execute(transcription); err != nil {
 				logger.Errorf("Action %s failed to execute", err, a.GetMetadata().Name)
 			}
 		}
 	}
+	logger.Debugf("Router: Executed %d non-LLM actions", nonLLMActionsExecuted)
 
 	// Check if there are any actions with LLMCommands
 	hasLLMActions := false
+	llmActionCount := 0
 	for _, a := range r.actions {
 		if meta := a.GetMetadata(); meta.LLMCommands != nil && len(*meta.LLMCommands) > 0 {
 			hasLLMActions = true
-			break
+			llmActionCount++
 		}
 	}
 
 	// Skip LLM analysis if there are no actions with LLMCommands
 	if !hasLLMActions {
-		logger.Debugf("Skipping LLM analysis - no actions with LLMCommands defined")
+		logger.Debugf("Router: Skipping LLM analysis - no actions with LLMCommands defined")
 		return nil
 	}
 
+	// Skip LLM analysis if no LLM provider is available
+	if r.llmProvider == nil {
+		logger.Infof("Router: Skipping LLM analysis - no LLM provider configured (found %d actions requiring LLM)", llmActionCount)
+		return nil
+	}
+
+	logger.Debugf("Router: Starting LLM analysis with %d LLM-enabled actions", llmActionCount)
 	llmResp, err := r.analyzeWithLLM(transcription)
 	if err != nil {
 		logger.Error("LLM analysis failed", err)
@@ -192,6 +231,8 @@ func (r *Router) Route(transcription string) error {
 }
 
 func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
+	logger.Debugf("Router: Starting LLM analysis for transcription: %s", sanitizeLog(transcription))
+
 	actionsDoc := strings.Builder{}
 
 	logger.Debugf("Building LLM actions documentation with %d available actions", len(r.actions))
