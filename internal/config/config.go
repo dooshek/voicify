@@ -108,6 +108,23 @@ func mergeConfigs(targetConfig, sourceConfig *types.Config) {
 		targetConfig.LLM.Router.Temperature = sourceConfig.LLM.Router.Temperature
 	}
 
+	// Update TTS settings if set
+	if sourceConfig.TTS.Provider != "" {
+		targetConfig.TTS.Provider = sourceConfig.TTS.Provider
+	}
+	if sourceConfig.TTS.Voice != "" {
+		targetConfig.TTS.Voice = sourceConfig.TTS.Voice
+	}
+	if sourceConfig.TTS.OpenAI.Model != "" {
+		targetConfig.TTS.OpenAI.Model = sourceConfig.TTS.OpenAI.Model
+	}
+	if sourceConfig.TTS.OpenAI.Speed != 0 {
+		targetConfig.TTS.OpenAI.Speed = sourceConfig.TTS.OpenAI.Speed
+	}
+	if sourceConfig.TTS.OpenAI.Format != "" {
+		targetConfig.TTS.OpenAI.Format = sourceConfig.TTS.OpenAI.Format
+	}
+
 	// Preserve any additional fields that might be added in the future
 	// This is a basic implementation - for more complex nested structures,
 	// you might need a more sophisticated merging strategy

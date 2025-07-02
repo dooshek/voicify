@@ -12,7 +12,8 @@ var (
 )
 
 type AppState struct {
-	Config *types.Config
+	Config     *types.Config
+	ttsManager interface{} // Use interface{} to avoid import cycle, will be *tts.Manager
 }
 
 func Init(cfg *types.Config) {
@@ -28,6 +29,16 @@ func Get() *AppState {
 		panic("AppState not initialized")
 	}
 	return instance
+}
+
+// SetTTSManager sets the TTS manager in the global state
+func (s *AppState) SetTTSManager(manager interface{}) {
+	s.ttsManager = manager
+}
+
+// GetTTSManager returns the TTS manager from global state
+func (s *AppState) GetTTSManager() interface{} {
+	return s.ttsManager
 }
 
 func (s *AppState) GetTranscriptionProvider() types.LLMProvider {

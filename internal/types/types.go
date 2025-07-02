@@ -62,9 +62,31 @@ type LLMRouter struct {
 	Temperature float64 `yaml:"temperature"`
 }
 
+// TTSConfig holds configuration for Text-to-Speech
+type TTSConfig struct {
+	Provider string            `yaml:"provider"` // "openai", "realtime", "elevenlabs"
+	Voice    string            `yaml:"voice"`    // default voice to use
+	OpenAI   TTSOpenAIConfig   `yaml:"openai"`
+	Realtime TTSRealtimeConfig `yaml:"realtime"`
+}
+
+// TTSOpenAIConfig holds OpenAI TTS specific configuration
+type TTSOpenAIConfig struct {
+	Model  string  `yaml:"model"`  // "tts-1" or "tts-1-hd"
+	Speed  float64 `yaml:"speed"`  // 0.25-4.0, default 1.0
+	Format string  `yaml:"format"` // "opus", "mp3", "aac", "flac"
+}
+
+// TTSRealtimeConfig holds OpenAI Realtime API TTS specific configuration
+type TTSRealtimeConfig struct {
+	Model string  `yaml:"model"` // "gpt-4o-realtime-preview" or "gpt-4o-mini-realtime-preview"
+	Speed float64 `yaml:"speed"` // Not directly supported, default 1.0
+}
+
 type Config struct {
 	RecordKey KeyBinding    `yaml:"record_key"`
 	LLM       LLMConfig     `yaml:"llm"`
+	TTS       TTSConfig     `yaml:"tts"`
 	Ydotool   YdotoolConfig `yaml:"ydotool"`
 }
 
@@ -80,6 +102,42 @@ func (c *Config) GetYdotoolConfig() YdotoolConfig {
 
 func (c *Config) GetLLMConfig() LLMConfig {
 	return c.LLM
+}
+
+// GetTTSConfig returns TTS configuration with defaults
+func (c *Config) GetTTSConfig() TTSConfig {
+	config := c.TTS
+
+	// Set provider default
+	if config.Provider == "" {
+		config.Provider = "realtime" // Default to Realtime API for better quality
+	}
+
+	// Set voice default
+	if config.Voice == "" {
+		config.Voice = "nova" // Good for Polish
+	}
+
+	// OpenAI TTS defaults
+	if config.OpenAI.Model == "" {
+		config.OpenAI.Model = "tts-1-hd"
+	}
+	if config.OpenAI.Speed == 0 {
+		config.OpenAI.Speed = 1.0
+	}
+	if config.OpenAI.Format == "" {
+		config.OpenAI.Format = "opus"
+	}
+
+	// Realtime API defaults
+	if config.Realtime.Model == "" {
+		config.Realtime.Model = "gpt-4o-realtime-preview"
+	}
+	if config.Realtime.Speed == 0 {
+		config.Realtime.Speed = 1.0
+	}
+
+	return config
 }
 
 const (

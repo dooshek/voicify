@@ -2,8 +2,14 @@ github.com/BurntSushi/freetype-go v0.0.0-20160129220410-b763ddbfe298/go.mod h1:D
 github.com/BurntSushi/graphics-go v0.0.0-20160129215708-b43f31a4a966/go.mod h1:Mid70uvE93zn9wgF92A/r5ixgnvX8Lh68fxp9KQBaI0=
 github.com/MarinX/keylogger v0.0.0-20240620105846-48ca9d01f566 h1:3uD1lmRbdt8Ho73IcAUTxRQtksuupGMigYG0x+yOi+o=
 github.com/MarinX/keylogger v0.0.0-20240620105846-48ca9d01f566/go.mod h1:aKzZ7D15UvH5LboXkeLmcNi+s/f805vUfB+BfW1fqd4=
+github.com/WqyJh/go-openai-realtime v0.6.0 h1:sG/vqGt4dDoKoYYYQ0MGHZTi8EwWPVe0kJodzlR7ZJE=
+github.com/WqyJh/go-openai-realtime v0.6.0/go.mod h1:BCN7J7AUbfSFkLLVnhGWF2OkvoQ7GqTWrU/w+d+QwR4=
+github.com/WqyJh/jsontools v0.3.1 h1:zKT+DvxUSTji06ZcjsbQzZ48PycFZDI0OGATmmFhJ+U=
+github.com/WqyJh/jsontools v0.3.1/go.mod h1:Gk2OlyXjAJmYNZ0aUbEXGHq4I5ihGRjXxVuUprWtkss=
 github.com/aws/aws-sdk-go v1.38.20 h1:QbzNx/tdfATbdKfubBpkt84OM6oBkxQZRw6+bW2GyeA=
 github.com/aws/aws-sdk-go v1.38.20/go.mod h1:hcU610XS61/+aQV88ixoOzUoG7v3b31pl2zKMmprdro=
+github.com/coder/websocket v1.8.12 h1:5bUXkEPPIbewrnkU8LTCLVaxi4N4J8ahufH2vlo4NAo=
+github.com/coder/websocket v1.8.12/go.mod h1:LNVeNrXQZfe5qhS9ALED3uA+l5pPqvwXg3CKoDBB2gs=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

@@ -4,6 +4,7 @@ go 1.23.7
 
 require (
 	github.com/MarinX/keylogger v0.0.0-20240620105846-48ca9d01f566
+	github.com/WqyJh/go-openai-realtime v0.6.0
 	github.com/fatih/color v1.16.0
 	github.com/gen2brain/malgo v0.11.23
 	github.com/go-vgo/robotgo v0.110.5
@@ -15,6 +16,7 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go v1.38.20 // indirect
+	github.com/coder/websocket v1.8.12 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240820181039-f2b84150679e // indirect
 	github.com/ebitengine/purego v0.8.2 // indirect
 	github.com/gen2brain/shm v0.1.1 // indirect
