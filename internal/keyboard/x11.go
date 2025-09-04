@@ -47,65 +47,65 @@ func (x *X11Monitor) Start(ctx context.Context) error {
 	// Find keyboard device
 	keyboard := keylogger.FindKeyboardDevice()
 	if keyboard == "" {
-		return fmt.Errorf("nie znaleziono urządzenia klawiatury - sprawdź uprawnienia (grupa input)")
+		return fmt.Errorf("no keyboard device found - check permissions (input group)")
 	}
 
-	logger.Debugf("Znaleziono klawiaturę: %s", keyboard)
+	logger.Debugf("Found keyboard: %s", keyboard)
 
 	// Initialize keylogger
 	k, err := keylogger.New(keyboard)
 	if err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
-			return fmt.Errorf("permission denied: cannot access keyboard device.\n\n" +
+			fmt.Printf("Cannot access keyboard device.\n" +
 				"Solution:\n" +
 				"1. Add yourself to the input group: sudo usermod -aG input $USER\n" +
 				"2. Log out and log back in (or restart your system)\n" +
-				"3. Run the program again\n\n" +
-				"Alternatively, you can run the program with sudo (not recommended).")
+				"3. Run the program again\n" +
+				"Alternatively, you can run the program with sudo (not recommended).\n\n")
 		}
-		return fmt.Errorf("błąd inicjalizacji keylogger: %v", err)
+		return fmt.Errorf("error initializing keylogger: %w", err)
 	}
 
 	x.keyLogger = k
 	x.isRunning = true
 
-	logger.Debugf("Nasłuchiwanie kombinacji: Ctrl=%v, Shift=%v, Alt=%v, Super=%v, Key=%s",
+	logger.Debugf("Listening to combination: Ctrl=%v, Shift=%v, Alt=%v, Super=%v, Key=%s",
 		x.keyConfig.Ctrl, x.keyConfig.Shift, x.keyConfig.Alt, x.keyConfig.Super, x.keyConfig.Key)
 
 	// Start monitoring in goroutine
-	logger.Debugf("Uruchamiam goroutine monitorKeys()")
+	logger.Debugf("Starting goroutine monitorKeys()")
 	go func() {
-		logger.Debugf("Wewnątrz goroutine - zaraz wywołam monitorKeys()")
+		logger.Debugf("Inside goroutine - soon calling monitorKeys()")
 		x.monitorKeys()
-		logger.Debugf("monitorKeys() zakończone")
+		logger.Debugf("monitorKeys() completed")
 	}()
 
-	logger.Debugf("Goroutine monitorKeys() uruchomiona, metoda Start() zakończona pomyślnie")
+	logger.Debugf("Goroutine monitorKeys() started, Start() completed successfully")
 
 	// Krótkie oczekiwanie aby upewnić się że goroutine ma szansę na start
 	time.Sleep(100 * time.Millisecond)
-	logger.Debugf("Po time.Sleep - sprawdzam czy goroutine działa")
+	logger.Debugf("After time.Sleep - checking if goroutine is running")
 
 	// Blokuj i czekaj na zakończenie - nieskończenie
 	select {
 	case <-x.ctx.Done():
-		logger.Debugf("Kontekst anulowany, kończę Start()")
+		logger.Debugf("Context cancelled, stopping Start()")
 	}
 
 	return nil
 }
 
 func (x *X11Monitor) monitorKeys() {
-	logger.Debugf("monitorKeys() - wejście do funkcji")
+	logger.Debugf("monitorKeys() - entering function")
 
 	defer func() {
-		logger.Debugf("monitorKeys() - defer: zamykam keyLogger")
+		logger.Debugf("monitorKeys() - defer: closing keyLogger")
 		x.keyLogger.Close()
 	}()
 
-	logger.Debugf("monitorKeys() - wywołuję x.keyLogger.Read()")
+	logger.Debugf("monitorKeys() - calling x.keyLogger.Read()")
 	events := x.keyLogger.Read()
-	logger.Debugf("monitorKeys() - otrzymałem kanał events: %v", events != nil)
+	logger.Debugf("monitorKeys() - received events channel: %v", events != nil)
 
 	// State tracking for modifiers
 	ctrlPressed := false
@@ -116,27 +116,27 @@ func (x *X11Monitor) monitorKeys() {
 	lastToggleTime := time.Now()
 	debounceInterval := 200 * time.Millisecond
 
-	logger.Debugf("Rozpoczynam pętlę nasłuchiwania klawiszy")
+	logger.Debugf("Starting loop for listening to keys")
 
 	for {
 		select {
 		case <-x.ctx.Done():
-			logger.Debugf("Kontekst został anulowany, kończę nasłuchiwanie")
+			logger.Debugf("Context cancelled, stopping listening")
 			return
 		case e, ok := <-events:
 			if !ok {
-				logger.Debugf("Kanał events został zamknięty")
+				logger.Debugf("Events channel closed")
 				return
 			}
 
-			logger.Debugf("Otrzymano event: Type=%d, KeyString=%s, KeyCode=%d", e.Type, e.KeyString(), e.Code)
+			logger.Debugf("Received event: Type=%d, KeyString=%s, KeyCode=%d", e.Type, e.KeyString(), e.Code)
 
 			if e.Type != keylogger.EvKey {
 				continue
 			}
 
 			keyName := strings.ToLower(e.KeyString())
-			logger.Debugf("Event klawiatury: %s, Press=%v, Release=%v, KeyCode=%d", keyName, e.KeyPress(), e.KeyRelease(), e.Code)
+			logger.Debugf("Keyboard event: %s, Press=%v, Release=%v, KeyCode=%d", keyName, e.KeyPress(), e.KeyRelease(), e.Code)
 
 			// Handle Super key by keycode since KeyString() is empty
 			isSuperKey := (e.Code == 125) // Left Super/Windows key
@@ -146,23 +146,23 @@ func (x *X11Monitor) monitorKeys() {
 				switch {
 				case keyName == "ctrl" || keyName == "leftctrl" || keyName == "rightctrl" || keyName == "l_ctrl":
 					ctrlPressed = true
-					logger.Debugf("Ctrl naciśnięty")
+					logger.Debugf("Ctrl pressed")
 				case keyName == "shift" || keyName == "leftshift" || keyName == "rightshift":
 					shiftPressed = true
-					logger.Debugf("Shift naciśnięty")
+					logger.Debugf("Shift pressed")
 				case keyName == "alt" || keyName == "leftalt" || keyName == "rightalt":
 					altPressed = true
-					logger.Debugf("Alt naciśnięty")
+					logger.Debugf("Alt pressed")
 				case keyName == "leftmeta" || keyName == "rightmeta" || keyName == "cmd" || isSuperKey:
 					superPressed = true
-					logger.Debugf("Super naciśnięty (KeyCode=%d)", e.Code)
+					logger.Debugf("Super pressed (KeyCode=%d)", e.Code)
 				default:
-					logger.Debugf("Klawisz naciśnięty: %s", keyName)
+					logger.Debugf("Key pressed: %s", keyName)
 					// Check if this is our target key with correct modifiers
 					if x.isTargetKey(keyName) && x.modifiersMatch(ctrlPressed, shiftPressed, altPressed, superPressed) {
 						// Debounce to prevent multiple triggers
 						if time.Since(lastToggleTime) > debounceInterval {
-							logger.Debugf("Wykryto kombinację klawiszy, przełączanie nagrywania")
+							logger.Debugf("Detected key combination, toggling recording")
 							x.handleRecordingToggle()
 							lastToggleTime = time.Now()
 						}
@@ -173,16 +173,17 @@ func (x *X11Monitor) monitorKeys() {
 				switch {
 				case keyName == "ctrl" || keyName == "leftctrl" || keyName == "rightctrl" || keyName == "l_ctrl":
 					ctrlPressed = false
-					logger.Debugf("Ctrl zwolniony")
+					logger.Debugf("Ctrl released")
 				case keyName == "shift" || keyName == "leftshift" || keyName == "rightshift":
 					shiftPressed = false
-					logger.Debugf("Shift zwolniony")
+					logger.Debugf("Shift released")
+				case keyName == "alt" || keyName == "leftalt" || keyName == "rightalt":
 				case keyName == "alt" || keyName == "leftalt" || keyName == "rightalt":
 					altPressed = false
-					logger.Debugf("Alt zwolniony")
+					logger.Debugf("Alt released")
 				case keyName == "leftmeta" || keyName == "rightmeta" || keyName == "cmd" || isSuperKey:
 					superPressed = false
-					logger.Debugf("Super zwolniony (KeyCode=%d)", e.Code)
+					logger.Debugf("Super released (KeyCode=%d)", e.Code)
 				}
 			}
 		}
@@ -221,6 +222,6 @@ func (x *X11Monitor) Stop() {
 			x.keyLogger.Close()
 		}
 		x.isRunning = false
-		logger.Debugf("Zatrzymano monitorowanie klawiatury")
+		logger.Debugf("Stopped monitoring keyboard")
 	}
 }

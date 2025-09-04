@@ -3,6 +3,7 @@ package keyboard
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MarinX/keylogger"
@@ -37,14 +38,13 @@ func (w *WaylandMonitor) Start(ctx context.Context) error {
 
 	kbd, err := keylogger.New(keyboards[0])
 	if err != nil {
-		if err.Error() == "permission denied" ||
-			err.Error() == "permission denied. run with root permission or use a user with access to /dev/input/event3" {
-			return fmt.Errorf("permission denied: cannot access keyboard device.\n\n" +
-				"Solution:\n" +
-				"1. Add yourself to the input group: sudo usermod -aG input $USER\n" +
-				"2. Log out and log back in (or restart your system)\n" +
-				"3. Run the program again\n\n" +
-				"Alternatively, you can run the program with sudo (not recommended).")
+		if strings.Contains(err.Error(), "permission denied") {
+			fmt.Printf("Cannot access keyboard device.\n" +
+				"Solution: \n" +
+				"1. Add yourself to the input group: sudo usermod -aG input $USER \n" +
+				"2. Log out and log back in (or restart your system) \n" +
+				"3. Run the program again \n" +
+				"Alternatively, you can run the program with sudo (not recommended).\n\n")
 		}
 		return fmt.Errorf("error initializing keylogger: %w", err)
 	}
@@ -52,13 +52,13 @@ func (w *WaylandMonitor) Start(ctx context.Context) error {
 	w.keyboard = kbd
 	events := kbd.Read()
 
-	// Debounce threshold - ignoruje zdarzenia, które przychodzą zbyt szybko
+	// Debounce threshold - ignore events that come too fast
 	debounceThreshold := 500 * time.Millisecond
 
 	for e := range events {
 		if e.Type == keylogger.EvKey {
 			code := uint16(e.Code)
-			// Zapisz czas zdarzenia dla modyfikatorów
+			// Save event time for modifiers
 			if e.KeyPress() {
 				switch code {
 				case WaylandLeftControl, WaylandRightControl:
@@ -71,15 +71,15 @@ func (w *WaylandMonitor) Start(ctx context.Context) error {
 					w.modifierState.Super = true
 				default:
 					if code == w.targetKeyCode && w.checkModifiers() {
-						// Sprawdź czas od ostatniego zdarzenia tego klawisza
+						// Check time since last event of this key
 						now := time.Now()
 						if w.lastKeyEventTime.IsZero() || now.Sub(w.lastKeyEventTime) > debounceThreshold {
 							w.lastKeyEventTime = now
-							logger.Debugf("Wykryto kombinację klawiszy w Wayland, przełączanie nagrywania")
+							logger.Debugf("Detected key combination in Wayland, toggling recording")
 							w.handleRecordingToggle()
 						} else {
 							timeSinceLastEvent := now.Sub(w.lastKeyEventTime).Milliseconds()
-							logger.Debugf("Wayland: Ignorowanie zdarzenia - zbyt szybko po poprzednim (%d ms < %d ms próg)",
+							logger.Debugf("Wayland: Ignoring event - too soon after previous (%d ms < %d ms threshold)",
 								timeSinceLastEvent, debounceThreshold.Milliseconds())
 						}
 					}

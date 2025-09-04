@@ -14,7 +14,7 @@ import (
 	"github.com/dooshek/voicify/internal/types"
 )
 
-// ModifierState tracks the state of modifier keys
+// ModifierState tracks the state of modifier keys (Ctrl, Shift, Alt, Super)
 type ModifierState struct {
 	Ctrl  bool
 	Shift bool
@@ -28,31 +28,31 @@ type KeyboardMonitor interface {
 	Stop()
 }
 
-// Prosta blokada obsługi skrótów
+// Simple block of keyboard shortcuts
 var (
 	isBlocked      bool
 	blockMutex     sync.Mutex
 	blockUntilTime time.Time
 )
 
-// BlockKeyboardShortcuts blokuje obsługę skrótów na określony czas
+// BlockKeyboardShortcuts blocks shortcuts for a specified duration
 func BlockKeyboardShortcuts(duration time.Duration) {
 	blockMutex.Lock()
 	isBlocked = true
 	blockUntilTime = time.Now().Add(duration)
 	blockMutex.Unlock()
-	logger.Debugf("Skróty klawiszowe zablokowane na %d sekund", int(duration.Seconds()))
+	logger.Debugf("Keyboard shortcuts blocked for %d seconds", int(duration.Seconds()))
 }
 
-// isKeyboardBlocked sprawdza czy obsługa skrótów jest obecnie zablokowana
+// isKeyboardBlocked checks if keyboard shortcuts are currently blocked
 func isKeyboardBlocked() bool {
 	blockMutex.Lock()
 	defer blockMutex.Unlock()
 
-	// Jeśli czas blokady minął, automatycznie odblokuj
+	// If the block time has passed, automatically unlock
 	if isBlocked && time.Now().After(blockUntilTime) {
 		isBlocked = false
-		logger.Debugf("Blokada skrótów klawiszowych zakończona")
+		logger.Debugf("Keyboard shortcuts blocked ended")
 	}
 
 	return isBlocked
@@ -90,31 +90,31 @@ func (b *BaseMonitor) checkModifiers() bool {
 
 // handleRecordingToggle toggles the recording state
 func (b *BaseMonitor) handleRecordingToggle() {
-	// Najpierw sprawdź czy skróty są zablokowane
+	// First check if shortcuts are blocked
 	if isKeyboardBlocked() {
-		logger.Debugf("Skrót zignorowany - obsługa skrótów jest zablokowana")
+		logger.Debugf("Shortcut ignored - keyboard shortcuts are blocked")
 		return
 	}
 
 	if !b.recorder.IsRecording() {
-		logger.Debugf("Rozpoczynam nagrywanie")
+		logger.Debugf("Starting recording")
 		b.recorder.Start()
 	} else {
-		logger.Debugf("Zatrzymuję nagrywanie")
+		logger.Debugf("Stopping recording")
 
-		// Blokuj ALL incomming keyboard events na 5 sekund
+		// Block ALL incomming keyboard events for 5 seconds
 		// To bardzo agresywne podejście ale powinno rozwiązać problem
 		BlockKeyboardShortcuts(5 * time.Second)
 
 		transcription, err := b.recorder.Stop()
 		if err != nil {
-			logger.Errorf("Błąd podczas zatrzymywania nagrywania: %v", err)
+			logger.Errorf("Error stopping recording: %v", err)
 			return
 		}
 
 		router := transcriptionrouter.New(transcription)
 		if err := router.Route(transcription); err != nil {
-			logger.Errorf("Błąd podczas routingu transkrypcji: %v", err)
+			logger.Errorf("Error routing transcription: %v", err)
 		}
 	}
 }
