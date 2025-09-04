@@ -272,7 +272,16 @@ func main() {
 		os.Exit(0)
 	}()
 
-	monitor.Start(ctx)
+	// Start monitoring in a goroutine
+	go func() {
+		if err := monitor.Start(ctx); err != nil {
+			logger.Error("Keyboard monitor failed", err)
+		}
+	}()
+
+	// Block and wait for shutdown signal
+	<-ctx.Done()
+	logger.Infof("Shutting down...")
 }
 
 // handlePluginCommand implements plugin management functionality

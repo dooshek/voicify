@@ -39,7 +39,12 @@ func (w *WaylandMonitor) Start(ctx context.Context) error {
 	if err != nil {
 		if err.Error() == "permission denied" ||
 			err.Error() == "permission denied. run with root permission or use a user with access to /dev/input/event3" {
-			return fmt.Errorf("permission denied. Run: sudo usermod -aG input $USER and log out/in")
+			return fmt.Errorf("permission denied: cannot access keyboard device.\n\n" +
+				"Solution:\n" +
+				"1. Add yourself to the input group: sudo usermod -aG input $USER\n" +
+				"2. Log out and log back in (or restart your system)\n" +
+				"3. Run the program again\n\n" +
+				"Alternatively, you can run the program with sudo (not recommended).")
 		}
 		return fmt.Errorf("error initializing keylogger: %w", err)
 	}

@@ -55,6 +55,14 @@ func (x *X11Monitor) Start(ctx context.Context) error {
 	// Initialize keylogger
 	k, err := keylogger.New(keyboard)
 	if err != nil {
+		if strings.Contains(err.Error(), "permission denied") {
+			return fmt.Errorf("permission denied: cannot access keyboard device.\n\n" +
+				"Solution:\n" +
+				"1. Add yourself to the input group: sudo usermod -aG input $USER\n" +
+				"2. Log out and log back in (or restart your system)\n" +
+				"3. Run the program again\n\n" +
+				"Alternatively, you can run the program with sudo (not recommended).")
+		}
 		return fmt.Errorf("błąd inicjalizacji keylogger: %v", err)
 	}
 
