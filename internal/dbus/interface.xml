@@ -1,0 +1,31 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+
+<node>
+  <interface name="com.dooshek.voicify.Recorder">
+    <!-- Methods -->
+    <method name="ToggleRecording">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="toggle_recording"/>
+    </method>
+
+    <method name="GetStatus">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="get_status"/>
+      <arg name="is_recording" type="b" direction="out"/>
+    </method>
+
+    <!-- Signals -->
+    <signal name="RecordingStarted">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="recording_started"/>
+    </signal>
+
+    <signal name="TranscriptionReady">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="transcription_ready"/>
+      <arg name="text" type="s"/>
+    </signal>
+
+    <signal name="RecordingError">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="recording_error"/>
+      <arg name="error" type="s"/>
+    </signal>
+  </interface>
+</node>

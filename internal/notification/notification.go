@@ -21,6 +21,22 @@ type Notifier interface {
 	PlayTranscriptionOverBeep() error
 }
 
+// SilentNotifier is a no-op implementation for daemon mode
+type SilentNotifier struct{}
+
+func NewSilent() Notifier {
+	return &SilentNotifier{}
+}
+
+func (s *SilentNotifier) NotifyRecordingStarted() error       { return nil }
+func (s *SilentNotifier) NotifyTranscribing() error          { return nil }
+func (s *SilentNotifier) NotifyTranscriptionComplete() error { return nil }
+func (s *SilentNotifier) Notify(title, message string) error { return nil }
+func (s *SilentNotifier) PlayStartBeep() error               { return nil }
+func (s *SilentNotifier) PlayStopBeep() error                { return nil }
+func (s *SilentNotifier) PlayProgressBeep() error           { return nil }
+func (s *SilentNotifier) PlayTranscriptionOverBeep() error  { return nil }
+
 type baseNotifier struct {
 	platform platformNotifier
 }

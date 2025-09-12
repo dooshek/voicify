@@ -53,6 +53,10 @@ type recordingResult struct {
 }
 
 func NewRecorder() (*Recorder, error) {
+	return NewRecorderWithNotifier(notification.New())
+}
+
+func NewRecorderWithNotifier(notifier notification.Notifier) (*Recorder, error) {
 	if err := checkFFmpegInstalled(); err != nil {
 		return nil, err
 	}
@@ -76,7 +80,7 @@ func NewRecorder() (*Recorder, error) {
 
 	return &Recorder{
 		transcriber: transcriber,
-		notifier:    notification.New(),
+		notifier:    notifier,
 		fileOps:     fileOps,
 		resultChan:  make(chan recordingResult, 1),
 	}, nil

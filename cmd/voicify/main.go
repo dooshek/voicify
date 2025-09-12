@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/dooshek/voicify/internal/config"
+	"github.com/dooshek/voicify/internal/dbus"
 	"github.com/dooshek/voicify/internal/fileops"
 	"github.com/dooshek/voicify/internal/keyboard"
 	"github.com/dooshek/voicify/internal/logger"
@@ -36,7 +37,7 @@ func init() {
 		fmt.Fprintf(out, "\n")
 
 		fmt.Fprintf(out, "COMMANDS:\n")
-		fmt.Fprintf(out, "  (default)    Start voice recording daemon\n")
+		fmt.Fprintf(out, "  (default)    Start voice recording with keyboard monitoring\n")
 		fmt.Fprintf(out, "  plugin       Manage plugins\n")
 		fmt.Fprintf(out, "\n")
 
@@ -62,7 +63,8 @@ func init() {
 		fmt.Fprintf(out, "  voicify plugin --cleanup               Clean up invalid plugin installations\n")
 
 		fmt.Fprintf(out, "\nEXAMPLES:\n")
-		fmt.Fprintf(out, "  voicify                                 Start voicify daemon\n")
+		fmt.Fprintf(out, "  voicify                                 Start voicify with keyboard monitoring\n")
+		fmt.Fprintf(out, "  voicify --daemon                        Start D-Bus daemon (for GNOME extension)\n")
 		fmt.Fprintf(out, "  voicify --wizard                        Run configuration wizard\n")
 		fmt.Fprintf(out, "  voicify --log-level debug               Start with debug logging\n")
 		fmt.Fprintf(out, "  voicify plugin --list                   List installed plugins\n")
@@ -95,6 +97,7 @@ func formatKeyCombo(cfg types.KeyBinding) string {
 func main() {
 	// Parse command line flags
 	runWizard := flag.Bool("wizard", false, "Run the configuration wizard")
+	daemonMode := flag.Bool("daemon", false, "Run as D-Bus daemon (for GNOME extension integration)")
 	logLevel := flag.String("log-level", "info", "Set log level (debug|info|warn|error)")
 	logFilename := flag.String("log-filename", "", "Log to file instead of stdout")
 
@@ -200,14 +203,27 @@ func main() {
 		logger.Debugf("TTS disabled: No OpenAI API key configured")
 	}
 
-	// Update monitor creation to not pass API key
-	monitor, err := keyboard.CreateMonitor(state.Get().Config.RecordKey)
-	if err != nil {
-		logger.Error("Failed to create keyboard monitor", err)
-		os.Exit(1)
-	}
+	var startMessage string
+	var monitor keyboard.KeyboardMonitor
+	var dbusServer *dbus.Server
 
-	startMessage := formatKeyCombo(state.Get().Config.RecordKey)
+	if *daemonMode {
+		// D-Bus daemon mode
+		dbusServer, err = dbus.NewServer()
+		if err != nil {
+			logger.Error("Failed to create D-Bus server", err)
+			os.Exit(1)
+		}
+		startMessage = "D-Bus daemon"
+	} else {
+		// Keyboard monitoring mode
+		monitor, err = keyboard.CreateMonitor(state.Get().Config.RecordKey)
+		if err != nil {
+			logger.Error("Failed to create keyboard monitor", err)
+			os.Exit(1)
+		}
+		startMessage = formatKeyCombo(state.Get().Config.RecordKey)
+	}
 
 	// Initialize fileops
 	fileOps, err := fileops.NewDefaultFileOps()
@@ -250,8 +266,13 @@ func main() {
 	}
 
 	// Print to console
-	logger.Infof("Press %s to start/stop recording", startMessage)
-	logger.Info("💡 Note: You can run `voicify --wizard` to change the key combination")
+	if *daemonMode {
+		logger.Infof("🔌 D-Bus daemon started: %s", startMessage)
+		logger.Info("💡 GNOME extension can now communicate with voicify")
+	} else {
+		logger.Infof("Press %s to start/stop recording", startMessage)
+		logger.Info("💡 Note: You can run `voicify --wizard` to change the key combination")
+	}
 
 	// Create context for clean shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -265,22 +286,39 @@ func main() {
 	go func() {
 		sig := <-sigChan
 		logger.Infof("Received signal %v, shutting down...", sig)
-		cancel() // Cancel context to stop keyboard monitoring
+		cancel() // Cancel context
+
+		// Clean up based on mode
+		if *daemonMode && dbusServer != nil {
+			dbusServer.Stop()
+		}
+
 		if err := fileOps.CleanupPID(); err != nil {
 			logger.Error("Failed to cleanup PID file", err)
 		}
 		os.Exit(0)
 	}()
 
-	// Start monitoring in a goroutine
-	go func() {
-		if err := monitor.Start(ctx); err != nil {
-			logger.Error("Keyboard monitor failed", err)
+	// Start service based on mode
+	if *daemonMode {
+		// Start D-Bus server
+		if err := dbusServer.Start(); err != nil {
+			logger.Error("Failed to start D-Bus server", err)
+			os.Exit(1)
 		}
-	}()
+		// Wait for server to be stopped
+		dbusServer.Wait()
+	} else {
+		// Start keyboard monitoring in a goroutine
+		go func() {
+			if err := monitor.Start(ctx); err != nil {
+				logger.Error("Keyboard monitor failed", err)
+			}
+		}()
+		// Block and wait for shutdown signal
+		<-ctx.Done()
+	}
 
-	// Block and wait for shutdown signal
-	<-ctx.Done()
 	logger.Infof("Shutting down...")
 }
 
