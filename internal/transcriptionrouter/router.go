@@ -90,8 +90,7 @@ func New(transcription string) *Router {
 	// Register all built-in plugins
 	logger.Debugf("Router: Attempting to register plugins...")
 	if err := plugin.RegisterAllPlugins(pluginMgr); err != nil {
-		logger.Errorf("Failed to register plugins: %v", err)OK, sprawdzam czy to działa.
-
+		logger.Errorf("Failed to register plugins: %v", err)
 	} else {
 		logger.Debugf("Router: Successfully registered plugins")
 		// Get actions from all plugins
