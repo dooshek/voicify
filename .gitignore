@@ -10,3 +10,4 @@ IDEAS.md
 *.so
 bin/*
 plugins/
+voicify
