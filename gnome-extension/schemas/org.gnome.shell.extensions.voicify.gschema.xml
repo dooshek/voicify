@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.voicify" path="/org/gnome/shell/extensions/voicify/">
+    <key name="keyboard-shortcut" type="as">
+      <default>['&lt;Ctrl&gt;&lt;Super&gt;v']</default>
+      <summary>Keyboard shortcut for voice recording</summary>
+      <description>The keyboard shortcut that triggers voice recording start/stop</description>
+    </key>
+  </schema>
+</schemalist>

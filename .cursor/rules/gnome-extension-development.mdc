@@ -1,0 +1,391 @@
+---
+alwaysApply: true
+description: GNOME Shell Extension Development Guide
+---
+
+# GNOME Shell Extension Development Rules
+
+## 🔧 Testing & Debugging Extensions
+
+### Restart GNOME Shell:
+- **X11**: `Alt+F2` → type `r` → `Enter`
+- **Wayland**: Must logout/login (no other way)
+- **Check logs**: `journalctl --user -u gnome-shell -f`
+
+### Extension Management:
+```bash
+gnome-extensions list                 # List all extensions
+gnome-extensions info UUID           # Check status (ACTIVE/ERROR/DISABLED)
+gnome-extensions enable UUID         # Enable extension
+gnome-extensions disable UUID        # Disable extension
+```
+
+### Cache Issues:
+- Extensions are cached by GNOME Shell
+- Always restart Shell after code changes
+- If extension shows in list but won't enable = restart needed
+
+## 📁 File Structure Requirements
+
+### Directory Structure:
+```
+~/.local/share/gnome-shell/extensions/UUID/
+├── extension.js      # REQUIRED - main code
+├── metadata.json     # REQUIRED - extension info
+└── stylesheet.css    # OPTIONAL - CSS styling
+```
+
+### metadata.json Format:
+```json
+{
+  "name": "Extension Name",
+  "description": "What it does",
+  "uuid": "unique@id.com",
+  "shell-version": ["48"],
+  "version": 1,
+  "url": "https://github.com/..."
+}
+```
+**CRITICAL**: Directory name MUST match UUID exactly
+
+## 🛠️ JavaScript Code Patterns
+
+### Extension Structure:
+```javascript
+'use strict';
+
+import St from 'gi://St';
+import Meta from 'gi://Meta'; 
+import Shell from 'gi://Shell';
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+
+export default class MyExtension extends Extension {
+    constructor(metadata) {
+        super(metadata);
+        // Only initialize variables here
+        // DO NOT create objects, connect signals, add timeouts
+        this._indicator = null;
+        this._action = null;
+    }
+
+    enable() {
+        console.debug(`enabling ${this.metadata.name}`);
+        // Create all objects here
+    }
+
+    disable() {
+        console.debug(`disabling ${this.metadata.name}`);
+        // Destroy EVERYTHING created in enable()
+        this._indicator?.destroy();
+        this._indicator = null;
+    }
+}
+```
+
+### Global Keyboard Shortcuts:
+```javascript
+// In enable():
+this._action = global.display.grab_accelerator('<Ctrl><Alt>space', Meta.KeyBindingFlags.NONE);
+if (this._action !== Meta.KeyBindingAction.NONE) {
+    const name = Meta.external_binding_name_for_action(this._action);
+    Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
+    
+    global.display.connect('accelerator-activated', (display, action) => {
+        if (action === this._action) {
+            this._onShortcutPressed();
+        }
+    });
+}
+
+// In disable():
+if (this._action !== null) {
+    global.display.ungrab_accelerator(this._action);
+    Main.wm.allowKeybinding(
+        Meta.external_binding_name_for_action(this._action), 
+        Shell.ActionMode.NONE
+    );
+}
+```
+
+### Timers (NO setTimeout!):
+```javascript
+// Use GLib.timeout_add instead of setTimeout
+this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+    // Do something
+    return GLib.SOURCE_REMOVE; // or GLib.SOURCE_CONTINUE
+});
+
+// In disable():
+if (this._timeoutId) {
+    GLib.Source.remove(this._timeoutId);
+    this._timeoutId = null;
+}
+```
+
+### D-Bus Communication:
+```javascript
+const DbusInterface = `
+<node>
+    <interface name="com.example.Service">
+        <method name="DoSomething">
+            <arg type="s" direction="out" name="result"/>
+        </method>
+        <signal name="SomethingHappened">
+            <arg type="s" name="data"/>
+        </signal>
+    </interface>
+</node>`;
+
+this._dbusProxy = Gio.DBusProxy.makeProxyWrapper(DbusInterface)(
+    Gio.DBus.session,
+    'com.example.Service',
+    '/com/example/Service'
+);
+```
+
+### Preferences Window (prefs.js):
+```javascript
+'use strict';
+
+import Adw from 'gi://Adw';
+import Gtk from 'gi://Gtk';
+// DO NOT import Clutter here - different context!
+
+import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+
+export default class MyPreferences extends ExtensionPreferences {
+    fillPreferencesWindow(window) {
+        const page = new Adw.PreferencesPage();
+        window.add(page);
+        
+        const group = new Adw.PreferencesGroup({
+            title: 'Settings',
+        });
+        page.add(group);
+        
+        // Add settings rows here
+    }
+}
+```
+
+## ⚠️ Common Mistakes
+
+### DO NOT:
+- Use `setTimeout()` - use `GLib.timeout_add()`
+- Create objects in `constructor()` 
+- Forget to clean up in `disable()`
+- Use `log()` - use `console.debug()`
+- Hardcode shell version in metadata
+- **Use `Clutter` imports in `prefs.js`** - preferences run in different context
+- **Use `grab_accelerator()` with only 1 argument** - needs 2nd parameter `Meta.KeyBindingFlags.NONE`
+- **Assume API methods exist** - `PanelMenu.Button` has NO `get_child()` method
+- **Guess errors** - ALWAYS check `journalctl` logs for actual JS ERROR messages
+
+### TEXT INJECTION LIMITATIONS:
+- **X11**: Virtual keyboard works for auto-paste using `Clutter.VirtualDevice`
+- **Wayland**: Security prevents keyboard simulation - only clipboard copy possible
+- **Working X11 code**:
+  ```javascript
+  const virtualKeyboard = Clutter.get_default_backend()
+      .get_default_seat()  
+      .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+  
+  virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+  virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+  virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+  virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+  ```
+
+### DO:
+- Always use `'use strict';`
+- Check if objects exist before destroying: `obj?.destroy()`
+- Use `console.debug()` for logging
+- Test with exact GNOME Shell version: `gnome-shell --version`
+- Restart Shell after every change
+
+## 🔍 Troubleshooting
+
+### Extension shows ERROR state:
+1. **ALWAYS CHECK LOGS FIRST**: `journalctl --user --since "10 minutes ago" -p err -p warning | grep -v "systemd"`
+2. **READ THE ACTUAL ERROR MESSAGE** - don't guess, find the exact JS ERROR line
+3. Verify metadata.json is valid JSON
+4. Check imports are correct for your Shell version
+5. Ensure proper enable/disable cleanup
+
+### CRITICAL API MISTAKES:
+- **`PanelMenu.Button` does NOT have `get_child()` method** - store icon reference directly
+- **Store icon in `this._icon`**, not `this._indicator.get_child()`
+- **Example:**
+  ```javascript
+  // WRONG:
+  const icon = this._indicator.get_child(); // ERROR!
+  
+  // CORRECT:
+  this._icon = new St.Icon({...});
+  this._indicator.add_child(this._icon);
+  // Then use this._icon directly
+  ```
+
+### Extension not appearing in list:
+1. Check directory name matches UUID
+2. Restart GNOME Shell
+3. Run `gdbus call --session --dest=org.gnome.Shell --object-path=/org/gnome/Shell --method=org.gnome.Shell.Eval 'Main.extensionManager.scanExtensions()'`
+
+## 🎨 Animations & UI Development
+
+### CSS vs JavaScript Animations:
+- **CSS animations are LIMITED/BROKEN** in GNOME Shell extensions
+- **Use JavaScript animations with `GLib.timeout_add`** for reliable animations
+- **Widget properties that animate well**: `scale_y`, `scale_x`, `opacity`
+- **Widget properties that DON'T animate**: `height`, `width` (set these once, use scaling)
+
+### Working Animation Pattern:
+```javascript
+// BAD - CSS animations don't work reliably:
+/* @keyframes grow { from { height: 5px; } to { height: 20px; } } */
+
+// GOOD - JavaScript with GLib timers:
+this._animTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+    if (this._state !== State.ANIMATING) return GLib.SOURCE_REMOVE;
+    
+    // Use scaling with pivot point for natural animations
+    bar.set_pivot_point(0.5, 1.0); // Scale from bottom
+    bar.scale_y = 0.5 + Math.sin(phase) * 0.5;
+    
+    phase += 0.1;
+    return GLib.SOURCE_CONTINUE;
+});
+```
+
+### Global UI Positioning:
+```javascript
+// Position widgets on screen (e.g., bottom center)
+const monitor = Main.layoutManager.primaryMonitor;
+const x = monitor.x + (monitor.width - widget.width) / 2;
+const y = monitor.y + monitor.height * 0.90; // 90% down screen
+
+widget.set_position(x, y);
+Main.layoutManager.addChrome(widget);
+
+// ALWAYS remove in disable():
+Main.layoutManager.removeChrome(widget);
+widget.destroy();
+```
+
+### State Management Pattern:
+```javascript
+const State = {
+    IDLE: 'idle',
+    RECORDING: 'recording', 
+    UPLOADING: 'uploading',
+    FINISHED: 'finished'
+};
+
+// Use consistent state transitions:
+this._setState(State.RECORDING);
+this._updateUI(); // Updates all UI based on current state
+```
+
+### Multiple Timer Management:
+```javascript
+// In constructor - initialize ALL timer references:
+this._recordTimer = null;
+this._uploadTimer = null;
+this._finishedTimer = null;
+this._barTimers = null; // Array of timers
+
+// Clean up ALL timers in disable() AND before starting new animations:
+_cleanupTimers() {
+    if (this._recordTimer) { GLib.Source.remove(this._recordTimer); this._recordTimer = null; }
+    if (this._uploadTimer) { GLib.Source.remove(this._uploadTimer); this._uploadTimer = null; }
+    if (this._finishedTimer) { GLib.Source.remove(this._finishedTimer); this._finishedTimer = null; }
+    if (this._barTimers) { 
+        this._barTimers.forEach(timer => GLib.Source.remove(timer)); 
+        this._barTimers = null; 
+    }
+}
+```
+
+## 🚀 Development Workflow
+
+### Deployment Script Pattern:
+```bash
+#!/bin/bash
+# sync-extension.sh - Essential for rapid development
+
+REPO_DIR="/path/to/gnome-extension"
+GNOME_EXT_DIR="$HOME/.local/share/gnome-shell/extensions/UUID"
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+
+# 1. Sync files (exact copy)
+rsync -av --delete \
+    --exclude="sync-extension.sh" \
+    --exclude=".git*" \
+    "$REPO_DIR/" "$GNOME_EXT_DIR/"
+
+# 2. Compile schemas (CRITICAL for GSettings)
+if [ -d "$GNOME_EXT_DIR/schemas" ]; then
+    glib-compile-schemas "$GNOME_EXT_DIR/schemas/"
+fi
+
+# 3. Restart extension
+gnome-extensions disable UUID 2>/dev/null || true
+sleep 1
+gnome-extensions enable UUID
+
+# 4. Check status and logs
+gnome-extensions info UUID | grep -E "(State|Enabled)"
+journalctl --user --since "$START_TIME" | grep -E "(UUID|JS ERROR|JS WARNING)"
+```
+
+### GSettings Schema Compilation:
+- **ALWAYS compile schemas** after changes: `glib-compile-schemas schemas/`
+- **Include in deployment script** - schemas won't work without compilation
+- **Schema changes require extension restart** - disable/enable not enough
+
+### Testing Procedures:
+
+#### 1. Basic Functionality Test:
+```bash
+# After each change:
+./sync-extension.sh
+# Watch logs in separate terminal:
+journalctl --user -u gnome-shell -f | grep -i UUID
+
+# Test sequence:
+1. Press keyboard shortcut - check state change
+2. Click panel icon - check UI response  
+3. Test all animation states
+4. Check preferences panel opens
+5. Test extension disable/enable
+```
+
+#### 2. Error Debugging Protocol:
+```bash
+# When extension shows ERROR state:
+1. journalctl --user --since "5 minutes ago" -p err | grep UUID
+2. Read EXACT error message - don't guess
+3. Check specific line number in stack trace
+4. Fix error, restart shell (Alt+F2 → r)
+5. Test again
+```
+
+#### 3. Memory Leak Testing:
+```bash
+# Run extension for extended time, then:
+1. Check timer cleanup in disable()
+2. Test multiple enable/disable cycles
+3. Monitor GNOME Shell memory usage
+4. Ensure no objects left after disable()
+```
+
+### Critical File Management:
+- **Source files in project repo** - never edit in ~/.local/share/
+- **Use rsync --delete** for exact synchronization
+- **Test deployment script frequently** - broken deployment = broken development
+- **Version control everything** - including schemas and CSS

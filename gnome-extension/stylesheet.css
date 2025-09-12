@@ -1,0 +1,45 @@
+/* Voicify Extension Styling */
+
+.system-status-icon.recording {
+    color: #ffffff;
+}
+
+.system-status-icon.uploading {
+    color: #3498db;
+}
+
+.system-status-icon.finished {
+    color: #27ae60;
+}
+
+/* Wave overlay widget */
+.voicify-wave-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 5px 13px;
+    box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+.voicify-wave-overlay.uploading {
+    background-color: rgba(116, 24, 134, 0.7);
+}
+
+.voicify-wave-overlay.finished {
+    background-color: rgba(24, 134, 83, 0.7);
+}
+
+.voicify-wave-container {
+    padding: 11px 0px 0px 11px;
+    margin: 0px 0px 0px 0px;
+}
+
+/* Equalizer bars - JavaScript animates them */
+.voicify-wave-bar {
+    background-color: #ffffff;
+    border-radius: 1px;
+    margin: 0 2px;
+    width: 6px;
+    height: 15px;
+    transform-origin: bottom;
+}
