@@ -145,49 +145,62 @@ func (r *Router) findAction(actionName string) types.PluginAction {
 			logger.Debugf("Found matching action: %s", meta.Name)
 			return a
 		}
-		if meta.LLMCommands != nil {
-			for _, cmd := range *meta.LLMCommands {
-				if strings.EqualFold(cmd, actionName) {
-					logger.Debugf("Found matching action via LLM command: %s => %s", actionName, meta.Name)
-					return a
-				}
-			}
-		}
+		// LLMRouterPrompt is not used for exact matching - only LLM analysis
 	}
 	logger.Debugf("No action found for: %s", actionName)
 	return nil
 }
 
 func (r *Router) Route(transcription string) error {
-	logger.Debugf("Router: Starting routing for transcription: %s", sanitizeLog(transcription))
+	logger.Debugf("Router: Starting routing for transcription: %s", transcription)
 
-	// Run first actions that has LLMAction set to false
+	// First pass: check which actions want to skip default action
+	skipDefaultAction := false
+	for _, a := range r.actions {
+		if a.GetMetadata().LLMRouterPrompt == nil || *a.GetMetadata().LLMRouterPrompt == "" {
+			meta := a.GetMetadata()
+			if meta.SkipDefaultAction {
+				skipDefaultAction = true
+				logger.Debugf("Router: Action %s will skip default action", meta.Name)
+			}
+		}
+	}
+
+	// Second pass: execute actions (skip default if needed)
 	nonLLMActionsExecuted := 0
 	for _, a := range r.actions {
-		if a.GetMetadata().LLMCommands == nil || len(*a.GetMetadata().LLMCommands) == 0 {
-			logger.Debugf("Router: Executing non-LLM action: %s", a.GetMetadata().Name)
+		if a.GetMetadata().LLMRouterPrompt == nil || *a.GetMetadata().LLMRouterPrompt == "" {
+			meta := a.GetMetadata()
+
+			// Skip default action if any plugin has set SkipDefaultAction to true
+			if meta.Name == "default" && skipDefaultAction {
+				logger.Debug("Router: Skipping default action - another plugin already handled it")
+				continue
+			}
+
+			logger.Debugf("Router: Executing non-LLM action: %s", meta.Name)
 			nonLLMActionsExecuted++
 
 			if err := a.Execute(transcription); err != nil {
-				logger.Errorf("Action %s failed to execute", err, a.GetMetadata().Name)
+				logger.Errorf("Action %s failed to execute", err, meta.Name)
 			}
 		}
 	}
 	logger.Debugf("Router: Executed %d non-LLM actions", nonLLMActionsExecuted)
 
-	// Check if there are any actions with LLMCommands
+	// Check if there are any actions with LLMRouterPrompt
 	hasLLMActions := false
 	llmActionCount := 0
 	for _, a := range r.actions {
-		if meta := a.GetMetadata(); meta.LLMCommands != nil && len(*meta.LLMCommands) > 0 {
+		if meta := a.GetMetadata(); meta.LLMRouterPrompt != nil && *meta.LLMRouterPrompt != "" {
 			hasLLMActions = true
 			llmActionCount++
 		}
 	}
 
-	// Skip LLM analysis if there are no actions with LLMCommands
+	// Skip LLM analysis if there are no actions with LLMRouterPrompt
 	if !hasLLMActions {
-		logger.Debugf("Router: Skipping LLM analysis - no actions with LLMCommands defined")
+		logger.Debugf("Router: Skipping LLM analysis - no actions with LLMRouterPrompt defined")
 		return nil
 	}
 
@@ -207,7 +220,7 @@ func (r *Router) Route(transcription string) error {
 	logger.Debugf("LLM suggested action: %s", llmResp.Action)
 	if action := r.findAction(llmResp.Action); action != nil {
 		logger.Debugf("Executing LLM-selected action: %s with transcription: %s",
-			action.GetMetadata().Name, sanitizeLog(llmResp.TranscriptionWithoutCommand))
+			action.GetMetadata().Name, llmResp.TranscriptionWithoutCommand)
 		err := action.Execute(llmResp.TranscriptionWithoutCommand)
 		if err != nil {
 			logger.Errorf("LLM-selected action %s failed", err, action.GetMetadata().Name)
@@ -221,22 +234,20 @@ func (r *Router) Route(transcription string) error {
 }
 
 func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
-	logger.Debugf("Router: Starting LLM analysis for transcription: %s", sanitizeLog(transcription))
+	logger.Debugf("Router: Starting LLM analysis for transcription: %s", transcription)
 
 	actionsDoc := strings.Builder{}
 
 	logger.Debugf("Building LLM actions documentation with %d available actions", len(r.actions))
 	for _, a := range r.actions {
-		if meta := a.GetMetadata(); meta.LLMCommands != nil && len(*meta.LLMCommands) > 0 {
-			commandsStr := strings.Join(*meta.LLMCommands, "|")
-			logger.Debugf("Adding action to LLM prompt: %s (commands: %s)", meta.Name, commandsStr)
-			actionsDoc.WriteString(fmt.Sprintf("- %s: %s (commands: %s)\n",
-				meta.Name, meta.Description, commandsStr))
+		if meta := a.GetMetadata(); meta.LLMRouterPrompt != nil && *meta.LLMRouterPrompt != "" {
+			logger.Debugf("Adding action to LLM prompt: %s", meta.Name)
+			actionsDoc.WriteString(fmt.Sprintf("- %s\n", *meta.LLMRouterPrompt))
 		}
 	}
 
 	prompt := fmt.Sprintf(string(r.promptCache), actionsDoc.String(), transcription)
-	logger.Debugf("LLM request prompt: %s", sanitizeLog(prompt))
+	logger.Debugf("LLM request prompt: %+v", prompt)
 
 	req := llm.CompletionRequest{
 		Model:       state.Get().Config.LLM.Router.Model,
@@ -244,32 +255,22 @@ func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
 		Temperature: float32(state.Get().Config.LLM.Router.Temperature),
 	}
 
-	logger.Debugf("Sending completion request with model: %s", req.Model)
 	response, err := r.llmProvider.Completion(context.Background(), req)
 	if err != nil {
 		return nil, fmt.Errorf("LLM completion failed: %w", err)
 	}
 
-	logger.Debugf("Received LLM response: %s", sanitizeLog(response))
+	logger.Debugf("Received LLM response: %+v", response)
 
 	var llmResp llmResponse
 	if err := json.Unmarshal([]byte(response), &llmResp); err != nil {
-		logger.Error(fmt.Sprintf("Failed to parse LLM response: %s", sanitizeLog(response)), err)
+		logger.Error(fmt.Sprintf("Failed to parse LLM response: %s", response), err)
 		return nil, fmt.Errorf("LLM response parsing failed: %w", err)
 	}
 
 	logger.Debugf("LLM response parsed successfully: action=%s, transcription=%s",
-		llmResp.Action, sanitizeLog(llmResp.TranscriptionWithoutCommand))
+		llmResp.Action, llmResp.TranscriptionWithoutCommand)
 
 	return &llmResp, nil
 }
 
-func sanitizeLog(input string) string {
-	if logger.GetCurrentLevel() != logger.LevelDebug {
-		return "[redacted]"
-	}
-	if len(input) > 100 {
-		return input[:100] + "..."
-	}
-	return input
-}
