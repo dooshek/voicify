@@ -1,21 +1,54 @@
 package plugin
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/dooshek/voicify/internal/logger"
+	"github.com/dooshek/voicify/internal/plugin/linear"
 	"github.com/dooshek/voicify/pkg/pluginapi"
 )
 
 // LinearPlugin is a plugin for Linear
-type LinearPlugin struct{}
+type LinearPlugin struct {
+	agenticLoop *linear.AgenticLoop
+	mu          sync.RWMutex
+}
 
 // LinearAction is the Linear action
 type LinearAction struct {
 	transcription string
+	plugin       *LinearPlugin
 }
 
 // Initialize initializes the Linear plugin
 func (p *LinearPlugin) Initialize() error {
 	logger.Debug("Linear plugin initialized")
+
+	// Initialize agentic loop - no setup required for npx mcp-remote
+	agenticLoop, err := linear.NewAgenticLoop()
+	if err != nil {
+		logger.Errorf("Failed to initialize agentic loop: %v", err)
+		return err
+	}
+
+	p.mu.Lock()
+	p.agenticLoop = agenticLoop
+	p.mu.Unlock()
+
+	return nil
+}
+
+// SetupLinearMCP initiates OAuth setup for Linear MCP
+func (p *LinearPlugin) SetupLinearMCP() error {
+	logger.Info("Starting Linear MCP OAuth setup...")
+
+	if err := linear.SetupLinearMCP(); err != nil {
+		logger.Errorf("Linear MCP setup failed: %v", err)
+		return err
+	}
+
+	logger.Info("Linear MCP setup completed successfully!")
 	return nil
 }
 
@@ -32,31 +65,93 @@ func (p *LinearPlugin) GetMetadata() pluginapi.PluginMetadata {
 // GetActions returns a list of actions provided by this plugin
 func (p *LinearPlugin) GetActions(transcription string) []pluginapi.PluginAction {
 	return []pluginapi.PluginAction{
-		&LinearAction{transcription: transcription},
+		&LinearAction{transcription: transcription, plugin: p},
 	}
 }
 
 // Execute executes the Linear action
 func (a *LinearAction) Execute(transcription string) error {
-	logger.Debugf("Linear plugin: Checking if Linear should execute action for transcription: %s", transcription)
+	logger.Debugf("Linear plugin: Executing action for transcription: %s", transcription)
+	logger.Info("🔧 Linear plugin: Akcja została uruchomiona - plugin Linear jest aktywny")
 
-	if !IsAppFocused("Linear") {
-		logger.Debug("Linear plugin: Linear is not open, skipping action")
-		return nil
+	// Check if agentic loop is already running
+	a.plugin.mu.RLock()
+	agenticLoop := a.plugin.agenticLoop
+	a.plugin.mu.RUnlock()
+
+	if agenticLoop == nil {
+		logger.Errorf("Agentic loop not initialized", fmt.Errorf("agentic loop is nil"))
+		return fmt.Errorf("agentic loop not initialized")
 	}
 
-	logger.Info("🔧 Linear plugin: Akcja została uruchomiona - plugin Linear jest aktywny")
-	logger.Debug("Linear plugin: Linear is focused, executing action")
+	// Check current state
+	currentState := agenticLoop.GetState()
+	logger.Debugf("Current agentic loop state: %s", currentState)
 
-	// Na razie tylko komunikat - implementacja będzie dodana później
-	logger.Debugf("Linear plugin: Transkrypcja do przetworzenia: %s", transcription)
-
-	return nil
+	switch currentState {
+	case linear.StateIdle:
+		// Start new agentic loop
+		logger.Debug("Starting new agentic loop")
+		if err := agenticLoop.Start(transcription); err != nil {
+			return err
+		}
+		// Don't return here - let the loop continue running
+		logger.Debug("Agentic loop started, continuing to listen for responses")
+		return nil
+	case linear.StateWaitingResponse:
+		// Process user response
+		logger.Debug("Processing user response")
+		if err := agenticLoop.ProcessResponse(transcription); err != nil {
+			return err
+		}
+		// Don't return here - let the loop continue running
+		logger.Debug("User response processed, continuing agentic loop")
+		return nil
+	case linear.StateAnswering:
+		// Agent is providing answer, ignore new transcriptions
+		logger.Debug("Agent is providing answer, ignoring transcription")
+		return nil
+	default:
+		logger.Warnf("Agentic loop is in state %s, ignoring transcription", currentState)
+		return nil
+	}
 }
 
 // GetMetadata returns metadata about the action
 func (a *LinearAction) GetMetadata() pluginapi.ActionMetadata {
-	prompt := `linear: Zarządzanie ticketami w Linear. Rozpoznaje komendy związane z tworzeniem, edycją i zarządzaniem ticketami/issue'ami w aplikacji Linear. Przykłady: "stwórz tiket", "edytuj ticket", "dodaj nowy issue w Linear", "zmień status tiketu", "linear zadanie", "w linearze stwórz", "nowy ticket do projektu"`
+	// Check if agentic loop is active
+	a.plugin.mu.RLock()
+	agenticLoop := a.plugin.agenticLoop
+	a.plugin.mu.RUnlock()
+
+	// If agentic loop is active (waiting for response or answering), make this a high-priority non-LLM action
+	if agenticLoop != nil && (agenticLoop.GetState() == linear.StateWaitingResponse ||
+	                          agenticLoop.GetState() == linear.StateAnswering) {
+		return pluginapi.ActionMetadata{
+			Name:        "linear",
+			Description: "active Linear agentic loop - processing user response",
+			Priority:    100, // Highest priority
+			// No LLMRouterPrompt - will be executed directly without LLM routing
+		}
+	}
+
+	// Normal LLM-routed action when agentic loop is idle
+	prompt := `linear: Zarządzanie ticketami w Linear. Rozpoznaje TYLKO operacyjne komendy związane z akcjami na ticketach/issue'ach w aplikacji Linear.
+
+WYKONUJ gdy słyszysz polecenia operacyjne:
+- Tworzenie: "stwórz tiket", "dodaj nowy issue", "utwórz zadanie w Linear", "nowy ticket", "linear zadanie"
+- Edycja: "edytuj ticket", "zmień status tiketu", "zaktualizuj issue", "usuń ticket", "zamknij issue"
+- Wyszukiwanie/Zarządzanie: "pokaż moje tickety", "znajdź issue", "lista zadań w Linear", "status ticketów", "poszukaj tickety", "ile ticketów", "sprawdź tickety", "wyświetl issue", "chciałbym żebyś poszukał", "ile razy występuje", "ile jest takich", "znajdź duplikaty"
+- Raportowanie/Status: "jakie tickety zostały zamknięte", "co się działo dzisiaj w Linear", "jakie zadania skończone", "opowiedz o ticketach", "raport z Linear", "co było robione", "które tickety są done", "jakie issues zakończone"
+- Usuwanie: "usuń ticket", "skasuj issue", "wyrzuć zadanie", "delete ticket"
+
+NIE WYKONUJ gdy to tylko rozmowa o Linear:
+- "Linear to dobre narzędzie"
+- "co myślisz o Linear"
+- "Linear ma fajny interface"
+- "używam Linear w pracy"
+
+Kluczowe: musi być wyraźne POLECENIE AKCJI, nie tylko wzmianka o Linear.`
 
 	return pluginapi.ActionMetadata{
 		Name:            "linear",

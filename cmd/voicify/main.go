@@ -16,6 +16,7 @@ import (
 	"github.com/dooshek/voicify/internal/keyboard"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
+	"github.com/dooshek/voicify/internal/plugin/linear"
 	"github.com/dooshek/voicify/internal/state"
 	"github.com/dooshek/voicify/internal/tts"
 	"github.com/dooshek/voicify/internal/types"
@@ -78,13 +79,24 @@ func formatKeyCombo(cfg types.KeyBinding) string {
 	return strings.Join(parts, " + ")
 }
 
+// initializeGlobalLinearMCP initializes global Linear MCP client
+func initializeGlobalLinearMCP() error {
+	client, err := linear.NewLinearMCPClient()
+	if err != nil {
+		return fmt.Errorf("failed to create Linear MCP client: %w", err)
+	}
+
+	// Store in global state
+	state.Get().SetLinearMCPClient(client)
+	return nil
+}
+
 func main() {
 	// Parse command line flags
 	runWizard := flag.Bool("wizard", false, "Run the configuration wizard")
 	daemonMode := flag.Bool("daemon", false, "Run as D-Bus daemon (for GNOME extension integration)")
 	logLevel := flag.String("log-level", "info", "Set log level (debug|info|warn|error)")
 	logFilename := flag.String("log-filename", "", "Log to file instead of stdout")
-
 
 	// Parse the global flags for non-plugin commands
 	flag.Parse()
@@ -145,6 +157,15 @@ func main() {
 		}
 	} else {
 		logger.Debugf("TTS disabled: No OpenAI API key configured")
+	}
+
+	// Pre-initialize Linear MCP client to avoid delays during usage
+	logger.Debug("Pre-initializing Linear MCP client...")
+	if err := initializeGlobalLinearMCP(); err != nil {
+		logger.Warnf("Failed to pre-initialize Linear MCP client: %v", err)
+		logger.Info("Linear MCP will be initialized on first use")
+	} else {
+		logger.Debug("Linear MCP client pre-initialized successfully")
 	}
 
 	var startMessage string
@@ -228,6 +249,13 @@ func main() {
 		// Clean up based on mode
 		if *daemonMode && dbusServer != nil {
 			dbusServer.Stop()
+		}
+
+		// Cleanup Linear MCP client
+		if mcpClient := state.Get().GetLinearMCPClient(); mcpClient != nil {
+			if client, ok := mcpClient.(*linear.LinearMCPClient); ok {
+				client.Close()
+			}
 		}
 
 		if err := fileOps.CleanupPID(); err != nil {

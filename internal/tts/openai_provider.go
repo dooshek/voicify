@@ -33,7 +33,7 @@ func NewOpenAITTSProvider(apiKey string, config OpenAIConfig) *OpenAITTSProvider
 		config.Model = "tts-1-hd" // Better quality
 	}
 	if config.Speed == 0 {
-		config.Speed = 1.0
+		config.Speed = 2.0
 	}
 	if config.Format == "" {
 		config.Format = "opus" // Smaller size, good quality

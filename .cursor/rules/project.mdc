@@ -1,0 +1,92 @@
+---
+alwaysApply: true
+description: Project structure and logging patterns for Voicify
+---
+
+# Voicify Project Structure and Logging Rules
+
+## Project Overview
+Voicify is a GNOME Shell extension with a Go backend that provides voice-controlled functionality. The main components are:
+
+- **GNOME Extension**: [gnome-extension/extension.js](mdc:gnome-extension/extension.js) - Frontend JavaScript
+- **Go Backend**: [cmd/voicify/main.go](mdc:cmd/voicify/main.go) - Main application entry point
+- **Configuration**: [internal/types/types.go](mdc:internal/types/types.go) - Type definitions and config structures
+
+## Critical Logging Patterns
+
+### Logger Function Signatures
+The logger package has specific function signatures that MUST be followed:
+
+```go
+// CORRECT usage:
+logger.Error(msg string, err error)                    // Error with error object
+logger.Errorf(format string, err error, v ...interface{}) // Errorf with error object
+logger.Debugf(format string, v ...interface{})         // Debugf without error object
+logger.Infof(format string, v ...interface{})          // Infof without error object
+
+// WRONG usage (will cause compilation errors):
+logger.Error("message")                                 // Missing error parameter
+logger.Errorf("format %s: %v", string, error)         // Wrong parameter order
+```
+
+### Common Logging Mistakes to Avoid
+
+1. **Never use `logger.Error()` with just a string** - it requires an error object as second parameter
+2. **Never use `logger.Errorf()` like `fmt.Printf`** - the error must be the second parameter
+3. **Always provide an error object** when using `logger.Error()` or `logger.Errorf()`
+
+### Plugin Structure
+Plugins are located in [internal/plugin/](mdc:internal/plugin/) and follow this pattern:
+
+- **Main plugin file**: `plugin_name.go` (e.g., [internal/plugin/linear.go](mdc:internal/plugin/linear.go))
+- **Plugin subdirectory**: `internal/plugin/plugin_name/` for complex plugins
+- **Plugin interface**: All plugins implement `pluginapi.Plugin` interface
+
+### Linear Plugin Architecture
+The Linear plugin ([internal/plugin/linear.go](mdc:internal/plugin/linear.go)) includes:
+
+- **MCP Client**: [internal/plugin/linear/mcp_client.go](mdc:internal/plugin/linear/mcp_client.go) - Handles Personal Access Token (PAT) auth and MCP protocol
+- **Agentic Loop**: [internal/plugin/linear/agentic_loop.go](mdc:internal/plugin/linear/agentic_loop.go) - Dynamic LLM-driven conversation flow
+- **Configuration**: Linear PAT settings in [internal/types/types.go](mdc:internal/types/types.go)
+- **Interactive Setup**: Prompts user for PAT and saves to config automatically
+
+### Configuration Management
+Configuration is managed through:
+
+- **Types**: [internal/types/types.go](mdc:internal/types/types.go) - All config structures
+- **State**: Global state management for config access
+- **PAT Auth**: Linear MCP requires Personal Access Token stored in config
+
+### Build and Development
+- **Main binary**: `go build -o bin/voicify ./cmd/voicify`
+- **Interactive setup**: Linear setup is integrated into main application
+
+### TTS System
+- **Voice mapping**: Automatic gender detection (alloy=female, echo=male, etc.)
+- **Gender-appropriate language**: Polish verb forms adjusted for voice gender
+- **System prompt**: Configurable template with %s placeholder for text
+- **Speed control**: "Mów wyraźnie i szybko" instruction for faster speech
+
+## Key Development Rules
+
+1. **Always check logger function signatures** before using them
+2. **Test compilation frequently** - logger errors are common and must be caught early
+3. **Use proper error handling** with logger functions
+4. **Follow the plugin interface** for consistency across plugins
+5. **Personal Access Tokens must be stored in config** for Linear MCP integration
+
+## Important
+
+**CRITICAL RULE: Always update this project.mdc file whenever project assumptions, architecture, or key patterns change. This file must be kept current to reflect the actual state of the project.**
+
+## Key Development Rules
+
+1. **Always check logger function signatures** before using them
+2. **Test compilation frequently** - logger errors are common and must be caught early
+3. **Use proper error handling** with logger functions
+4. **Follow the plugin interface** for consistency across plugins
+5. **Personal Access Tokens must be stored in config** for Linear MCP integration
+
+## Important
+
+**CRITICAL RULE: Always update this project.mdc file whenever project assumptions, architecture, or key patterns change. This file must be kept current to reflect the actual state of the project.**

@@ -64,10 +64,12 @@ type LLMRouter struct {
 
 // TTSConfig holds configuration for Text-to-Speech
 type TTSConfig struct {
-	Provider string            `yaml:"provider"` // "openai", "realtime", "elevenlabs"
-	Voice    string            `yaml:"voice"`    // default voice to use
-	OpenAI   TTSOpenAIConfig   `yaml:"openai"`
-	Realtime TTSRealtimeConfig `yaml:"realtime"`
+	Provider       string            `yaml:"provider"`        // "openai", "realtime", "elevenlabs"
+	Voice          string            `yaml:"voice"`           // default voice to use
+	SystemPrompt   string            `yaml:"system_prompt"`   // Template for TTS instructions (use %s for text)
+	Speed          float64           `yaml:"speed"`           // Speaking speed (0.25-4.0)
+	OpenAI         TTSOpenAIConfig   `yaml:"openai"`
+	Realtime       TTSRealtimeConfig `yaml:"realtime"`
 }
 
 // TTSOpenAIConfig holds OpenAI TTS specific configuration
@@ -82,6 +84,7 @@ type TTSRealtimeConfig struct {
 	Model string  `yaml:"model"` // "gpt-4o-realtime-preview" or "gpt-4o-mini-realtime-preview"
 	Speed float64 `yaml:"speed"` // Not directly supported, default 1.0
 }
+
 
 type Config struct {
 	RecordKey KeyBinding    `yaml:"record_key"`

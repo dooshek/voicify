@@ -8,6 +8,7 @@ require (
 	github.com/fatih/color v1.16.0
 	github.com/gen2brain/malgo v0.11.23
 	github.com/go-vgo/robotgo v0.110.5
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/rs/zerolog v1.34.0
 	github.com/sashabaranov/go-openai v1.35.7
 	github.com/u2takey/ffmpeg-go v0.5.0
@@ -21,7 +22,6 @@ require (
 	github.com/ebitengine/purego v0.8.2 // indirect
 	github.com/gen2brain/shm v0.1.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/kbinani/screenshot v0.0.0-20250118074034-a3924b7bbc8c // indirect

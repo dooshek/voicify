@@ -3,10 +3,35 @@ package tts
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/types"
 )
+
+// VoiceGender represents the gender of a voice
+type VoiceGender string
+
+const (
+	VoiceGenderMale   VoiceGender = "male"
+	VoiceGenderFemale VoiceGender = "female"
+)
+
+// VoiceInfo contains information about a voice
+type VoiceInfo struct {
+	Name   string
+	Gender VoiceGender
+}
+
+// OpenAI TTS voices mapping (based on common knowledge)
+var voiceMapping = map[string]VoiceInfo{
+	"alloy":   {Name: "alloy", Gender: VoiceGenderFemale},
+	"echo":    {Name: "echo", Gender: VoiceGenderMale},
+	"fable":   {Name: "fable", Gender: VoiceGenderFemale},
+	"onyx":    {Name: "onyx", Gender: VoiceGenderMale},
+	"nova":    {Name: "nova", Gender: VoiceGenderFemale},
+	"shimmer": {Name: "shimmer", Gender: VoiceGenderFemale},
+}
 
 // Manager manages TTS providers and handles text-to-speech operations
 type Manager struct {
@@ -41,7 +66,10 @@ func (m *Manager) Speak(ctx context.Context, text string) error {
 		voice = "nova" // fallback default
 	}
 
-	return m.provider.Speak(ctx, text, voice)
+	// Apply system prompt template if configured
+	finalText := m.applySystemPrompt(text, voice)
+
+	return m.provider.Speak(ctx, finalText, voice)
 }
 
 // SpeakWithVoice converts text to speech and plays it using a specific voice
@@ -95,6 +123,55 @@ func (m *Manager) GetProviderName() string {
 	return m.provider.GetProviderName()
 }
 
+// applySystemPrompt applies system prompt template and gender-appropriate language
+func (m *Manager) applySystemPrompt(text, voice string) string {
+	// Get voice info
+	voiceInfo, exists := voiceMapping[voice]
+	if !exists {
+		voiceInfo = VoiceInfo{Name: voice, Gender: VoiceGenderFemale} // default to female
+	}
+
+	// Apply gender-appropriate language modifications
+	finalText := m.applyGenderLanguage(text, voiceInfo.Gender)
+
+	// Apply system prompt template if configured
+	if m.config.SystemPrompt != "" {
+		// Replace %s with the text
+		finalText = fmt.Sprintf(m.config.SystemPrompt, finalText)
+	} else {
+		// Default system prompt for better pronunciation
+		if voiceInfo.Gender == VoiceGenderFemale {
+			finalText = fmt.Sprintf("Mów wyraźnie i szybko po polsku jako kobieta: %s", finalText)
+		} else {
+			finalText = fmt.Sprintf("Mów wyraźnie i szybko po polsku jako mężczyzna: %s", finalText)
+		}
+	}
+
+	logger.Debugf("TTS final text: %s", finalText)
+	return finalText
+}
+
+// applyGenderLanguage adjusts language for gender-appropriate speech
+func (m *Manager) applyGenderLanguage(text string, gender VoiceGender) string {
+	if gender == VoiceGenderFemale {
+		// Female forms in Polish
+		text = strings.ReplaceAll(text, "znalazłem", "znalazłam")
+		text = strings.ReplaceAll(text, "wykonałem", "wykonałam")
+		text = strings.ReplaceAll(text, "stworzyłem", "stworzyłam")
+		text = strings.ReplaceAll(text, "usunąłem", "usunęłam")
+		text = strings.ReplaceAll(text, "zaktualizowałem", "zaktualizowałam")
+	} else {
+		// Male forms in Polish (usually default)
+		text = strings.ReplaceAll(text, "znalazłam", "znalazłem")
+		text = strings.ReplaceAll(text, "wykonałam", "wykonałem")
+		text = strings.ReplaceAll(text, "stworzyłam", "stworzyłem")
+		text = strings.ReplaceAll(text, "usunęłam", "usunąłem")
+		text = strings.ReplaceAll(text, "zaktualizowałam", "zaktualizowałem")
+	}
+
+	return text
+}
+
 // createProvider creates appropriate TTS provider based on configuration and API key
 func createProvider(config types.TTSConfig, apiKey string) (TTSProvider, error) {
 	switch config.Provider {
@@ -109,6 +186,8 @@ func createProvider(config types.TTSConfig, apiKey string) (TTSProvider, error) 
 			Speed:  config.OpenAI.Speed,
 			Format: config.OpenAI.Format,
 		}
+
+		logger.Infof("OpenAI config: %+v", openaiConfig)
 
 		return NewOpenAITTSProvider(apiKey, openaiConfig), nil
 

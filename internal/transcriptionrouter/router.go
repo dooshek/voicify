@@ -61,7 +61,24 @@ type Router struct {
 	pluginMgr   *plugin.Manager
 }
 
-func New(transcription string) *Router {
+// GetOrCreateGlobalRouter returns existing global router or creates new one
+func GetOrCreateGlobalRouter() *Router {
+	// Check if global router exists
+	if existingRouter := state.Get().GetRouter(); existingRouter != nil {
+		if router, ok := existingRouter.(*Router); ok {
+			logger.Debug("Router: Using existing global router")
+			return router
+		}
+	}
+
+	// Create new router
+	logger.Debug("Router: Creating new global router")
+	router := createNewRouter()
+	state.Get().SetRouter(router)
+	return router
+}
+
+func createNewRouter() *Router {
 	routerProvider := state.Get().GetRouterProvider()
 	logger.Debugf("Router: Initializing with provider: '%s'", routerProvider)
 
@@ -93,8 +110,8 @@ func New(transcription string) *Router {
 		logger.Errorf("Failed to register plugins: %v", err)
 	} else {
 		logger.Debugf("Router: Successfully registered plugins")
-		// Get actions from all plugins
-		pluginActions := pluginMgr.GetAllActions(transcription)
+		// Get actions from all plugins (use empty transcription for initialization)
+		pluginActions := pluginMgr.GetAllActions("")
 		actions = append(actions, pluginActions...)
 		logger.Debugf("Router: Loaded %d plugin actions", len(pluginActions))
 	}
@@ -125,6 +142,11 @@ func New(transcription string) *Router {
 	}
 
 	return r
+}
+
+// New returns the global router (for backward compatibility)
+func New(transcription string) *Router {
+	return GetOrCreateGlobalRouter()
 }
 
 func (r *Router) cachePromptTemplate() error {

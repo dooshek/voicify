@@ -12,8 +12,10 @@ var (
 )
 
 type AppState struct {
-	Config     *types.Config
-	ttsManager interface{} // Use interface{} to avoid import cycle, will be *tts.Manager
+	Config        *types.Config
+	ttsManager    interface{} // Use interface{} to avoid import cycle, will be *tts.Manager
+	router        interface{} // Use interface{} to avoid import cycle, will be *transcriptionrouter.Router
+	linearMCPClient interface{} // Use interface{} to avoid import cycle, will be *linear.LinearMCPClient
 }
 
 func Init(cfg *types.Config) {
@@ -55,4 +57,24 @@ func (s *AppState) GetTranscriptionModel() string {
 
 func (s *AppState) GetRouterModel() string {
 	return s.Config.LLM.Router.Model
+}
+
+// SetRouter sets the global router in the state
+func (s *AppState) SetRouter(router interface{}) {
+	s.router = router
+}
+
+// GetRouter returns the global router from state
+func (s *AppState) GetRouter() interface{} {
+	return s.router
+}
+
+// SetLinearMCPClient sets the global Linear MCP client in the state
+func (s *AppState) SetLinearMCPClient(client interface{}) {
+	s.linearMCPClient = client
+}
+
+// GetLinearMCPClient returns the global Linear MCP client from state
+func (s *AppState) GetLinearMCPClient() interface{} {
+	return s.linearMCPClient
 }
