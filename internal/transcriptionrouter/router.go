@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dooshek/voicify/internal/fileops"
 	llm "github.com/dooshek/voicify/internal/llm"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/plugin"
@@ -23,9 +22,10 @@ import (
 var promptFiles embed.FS
 
 func initializeResources() error {
-	fileOps, err := fileops.NewDefaultFileOps()
-	if err != nil {
-		return fmt.Errorf("file ops initialization failed: %w", err)
+	// Create prompts directory in current working directory
+	promptsDir := "./prompts"
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create prompts directory: %w", err)
 	}
 
 	return fs.WalkDir(promptFiles, "prompts", func(path string, d fs.DirEntry, err error) error {
@@ -38,7 +38,7 @@ func initializeResources() error {
 			return fmt.Errorf("error reading %s: %w", path, err)
 		}
 
-		destPath := filepath.Join(fileOps.GetPromptsDir(), filepath.Base(path))
+		destPath := filepath.Join(promptsDir, filepath.Base(path))
 		return os.WriteFile(destPath, data, 0o644)
 	})
 }
@@ -84,24 +84,20 @@ func New(transcription string) *Router {
 	var actions []types.PluginAction
 
 	// Get plugin actions
-	fileOps, err := fileops.NewDefaultFileOps()
 	var pluginMgr *plugin.Manager
+	pluginMgr = plugin.NewManager()
 
-	if err == nil {
-		pluginsDir := fileOps.GetPluginsDir()
-		pluginMgr = plugin.NewManager(pluginsDir)
+	// Register all built-in plugins
+	logger.Debugf("Router: Attempting to register plugins...")
+	if err := plugin.RegisterAllPlugins(pluginMgr); err != nil {
+		logger.Errorf("Failed to register plugins: %v", err)OK, sprawdzam czy to działa.
 
-		// Load plugins
-		if err := pluginMgr.LoadPlugins(); err != nil {
-			logger.Errorf("Failed to load plugins: %v", err)
-		} else {
-			// Get actions from all plugins
-			pluginActions := pluginMgr.GetAllActions(transcription)
-			actions = append(actions, pluginActions...)
-			logger.Debugf("Router: Loaded %d plugin actions", len(pluginActions))
-		}
 	} else {
-		logger.Errorf("Failed to initialize file operations: %v", err)
+		logger.Debugf("Router: Successfully registered plugins")
+		// Get actions from all plugins
+		pluginActions := pluginMgr.GetAllActions(transcription)
+		actions = append(actions, pluginActions...)
+		logger.Debugf("Router: Loaded %d plugin actions", len(pluginActions))
 	}
 
 	// Sort actions by priority (higher priority first)
@@ -133,12 +129,7 @@ func New(transcription string) *Router {
 }
 
 func (r *Router) cachePromptTemplate() error {
-	fileOps, err := fileops.NewDefaultFileOps()
-	if err != nil {
-		return fmt.Errorf("fileops creation failed: %w", err)
-	}
-
-	promptPath := filepath.Join(fileOps.GetPromptsDir(), "router.md")
+	promptPath := "./prompts/router.md"
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		return fmt.Errorf("prompt template read failed: %w", err)
