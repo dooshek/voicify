@@ -52,9 +52,10 @@ func (a *VSCodeAction) Execute(transcription string) error {
 // GetMetadata returns metadata about the action
 func (a *VSCodeAction) GetMetadata() pluginapi.ActionMetadata {
 	return pluginapi.ActionMetadata{
-		Name:        "vscode",
-		Description: "wykonanie akcji w edytorze VSCode",
-		Priority:    2,
+		Name:              "vscode",
+		Description:       "wykonanie akcji w edytorze VSCode",
+		SkipDefaultAction: true, // VSCode plugin już kopiuje i wkleja tekst
+		Priority:          2,
 	}
 }
 

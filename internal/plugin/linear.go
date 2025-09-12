@@ -45,16 +45,24 @@ func (a *LinearAction) Execute(transcription string) error {
 		return nil
 	}
 
+	logger.Info("🔧 Linear plugin: Akcja została uruchomiona - plugin Linear jest aktywny")
 	logger.Debug("Linear plugin: Linear is focused, executing action")
-	return PasteWithReturn(transcription)
+
+	// Na razie tylko komunikat - implementacja będzie dodana później
+	logger.Debugf("Linear plugin: Transkrypcja do przetworzenia: %s", transcription)
+
+	return nil
 }
 
 // GetMetadata returns metadata about the action
 func (a *LinearAction) GetMetadata() pluginapi.ActionMetadata {
+	prompt := `linear: Zarządzanie ticketami w Linear. Rozpoznaje komendy związane z tworzeniem, edycją i zarządzaniem ticketami/issue'ami w aplikacji Linear. Przykłady: "stwórz tiket", "edytuj ticket", "dodaj nowy issue w Linear", "zmień status tiketu", "linear zadanie", "w linearze stwórz", "nowy ticket do projektu"`
+
 	return pluginapi.ActionMetadata{
-		Name:        "linear",
-		Description: "wykonanie akcji w Linear",
-		Priority:    2,
+		Name:            "linear",
+		Description:     "wykonanie akcji w Linear - tworzenie i edycja ticketów",
+		Priority:        2,
+		LLMRouterPrompt: &prompt,
 	}
 }
 

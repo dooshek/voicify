@@ -10,10 +10,11 @@ type PluginMetadata struct {
 
 // ActionMetadata contains information about an action
 type ActionMetadata struct {
-	Name        string
-	Description string
-	LLMCommands *[]string
-	Priority    int
+	Name            string
+	Description     string
+	LLMRouterPrompt *string
+	SkipDefaultAction bool
+	Priority        int
 }
 
 // PluginAction represents an action provided by a plugin

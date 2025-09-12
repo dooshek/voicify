@@ -57,9 +57,10 @@ func (a *actionAdapter) Execute(transcription string) error {
 func (a *actionAdapter) GetMetadata() types.ActionMetadata {
 	apiMetadata := a.apiAction.GetMetadata()
 	return types.ActionMetadata{
-		Name:        apiMetadata.Name,
-		Description: apiMetadata.Description,
-		LLMCommands: apiMetadata.LLMCommands,
-		Priority:    apiMetadata.Priority,
+		Name:              apiMetadata.Name,
+		Description:       apiMetadata.Description,
+		LLMRouterPrompt:   apiMetadata.LLMRouterPrompt,
+		SkipDefaultAction: apiMetadata.SkipDefaultAction,
+		Priority:          apiMetadata.Priority,
 	}
 }

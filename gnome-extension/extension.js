@@ -246,12 +246,10 @@ export default class VoicifyExtension extends Extension {
         this._startFinishedAnimation();
         console.debug('Transcription ready:', text);
 
-        // Copy to clipboard and auto-paste (extension handles all text injection)
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
-        console.debug('Text copied to clipboard:', text);
-
-        // Auto-paste with virtual keyboard (X11 only)
-        this._performAutoPaste();
+        // Don't auto-paste - daemon plugins handle text injection
+        // Just copy to clipboard for manual paste if needed
+        // St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        // console.debug('Text copied to clipboard for manual paste:', text);
     }
 
     _performAutoPaste() {
@@ -350,7 +348,7 @@ export default class VoicifyExtension extends Extension {
         // Add to main UI group (overlay)
         Main.uiGroup.add_child(this._waveWidget);
 
-        // Position at bottom left of center  
+        // Position at bottom left of center
         const monitor = Main.layoutManager.primaryMonitor;
         this._waveWidget.set_position(
             monitor.x + monitor.width / 2, // Move left
@@ -458,7 +456,7 @@ export default class VoicifyExtension extends Extension {
 
         this._waveBars.forEach((bar, index) => {
             const minScale = 0.2;
-            const maxScale = 0.7 + Math.random() * 0.7; // SMALLER max scale  
+            const maxScale = 0.7 + Math.random() * 0.7; // SMALLER max scale
             const speed = 30 + Math.random() * 60;      // 15% slower speed
 
             let scale = minScale;

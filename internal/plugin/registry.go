@@ -14,5 +14,11 @@ func RegisterAllPlugins(manager *Manager) error {
 		return err
 	}
 
+	// Register Default plugin (always last)
+	defaultPlugin := NewPluginAdapter(NewDefaultPlugin())
+	if err := manager.RegisterPlugin(defaultPlugin); err != nil {
+		return err
+	}
+
 	return nil
 }

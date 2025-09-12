@@ -46,13 +46,13 @@ func (m *Manager) RegisterPlugin(plugin types.VoicifyPlugin) error {
 	logger.Debugf("Plugin %s provides %d actions:", meta.Name, len(actions))
 	for i, action := range actions {
 		actionMeta := action.GetMetadata()
-		var commands string
-		if actionMeta.LLMCommands != nil {
-			commands = fmt.Sprintf("LLM Commands: %v", *actionMeta.LLMCommands)
+		var prompt string
+		if actionMeta.LLMRouterPrompt != nil {
+			prompt = fmt.Sprintf("LLM Router Prompt: %s", *actionMeta.LLMRouterPrompt)
 		} else {
-			commands = "No LLM Commands"
+			prompt = "No LLM Router Prompt"
 		}
-		logger.Debugf("  Action[%d]: %s - %s (%s)", i+1, actionMeta.Name, actionMeta.Description, commands)
+		logger.Debugf("  Action[%d]: %s - %s (%s)", i+1, actionMeta.Name, actionMeta.Description, prompt)
 	}
 
 	return nil
