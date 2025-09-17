@@ -190,6 +190,7 @@ func (r *Router) Route(transcription string) error {
 
 	// Second pass: execute actions (skip default if needed)
 	nonLLMActionsExecuted := 0
+	actionExecutedWithSkipDefault := false
 	for _, a := range r.actions {
 		if a.GetMetadata().LLMRouterPrompt == nil || *a.GetMetadata().LLMRouterPrompt == "" {
 			meta := a.GetMetadata()
@@ -205,10 +206,22 @@ func (r *Router) Route(transcription string) error {
 
 			if err := a.Execute(transcription); err != nil {
 				logger.Errorf("Action %s failed to execute", err, meta.Name)
+			} else {
+				// Check if this action has SkipDefaultAction set to true
+				if meta.SkipDefaultAction {
+					actionExecutedWithSkipDefault = true
+					logger.Debugf("Router: Action %s executed with SkipDefaultAction=true - ending routing", meta.Name)
+				}
 			}
 		}
 	}
 	logger.Debugf("Router: Executed %d non-LLM actions", nonLLMActionsExecuted)
+
+	// If any action with SkipDefaultAction was executed, end routing here
+	if actionExecutedWithSkipDefault {
+		logger.Debug("Router: Ending routing early - action with SkipDefaultAction was executed")
+		return nil
+	}
 
 	// Check if there are any actions with LLMRouterPrompt
 	hasLLMActions := false
@@ -295,4 +308,3 @@ func (r *Router) analyzeWithLLM(transcription string) (*llmResponse, error) {
 
 	return &llmResp, nil
 }
-

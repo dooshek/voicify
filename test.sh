@@ -79,6 +79,8 @@ fi
 
 echo -e "\n🔍 Checking Voicify backend logs..."
 if [ -f ~/.config/voicify/voicify.log ]; then
+    echo "⏳ Waiting 5 seconds for processing to complete..."
+    sleep 5
     echo "📄 Recent Voicify logs (last 20 lines):"
     echo "================================================"
     tail -20 ~/.config/voicify/voicify.log

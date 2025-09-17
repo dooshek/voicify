@@ -77,6 +77,7 @@ Configuration is managed through:
 - **Service status**: `systemctl --user status voicify`
 - **Log monitoring**: `journalctl --user -u voicify -f` for systemd logs
 - **Extension logs**: `journalctl --user -u gnome-shell -f` for GNOME Shell errors
+- **Log timing**: test.sh includes 5-second sleep before checking logs to wait for processing completion
 
 ### TTS System
 - **Voice mapping**: Automatic gender detection (alloy=female, echo=male, etc.)
@@ -93,6 +94,7 @@ Configuration is managed through:
 5. **Personal Access Tokens must be stored in config** for Linear MCP integration
 6. **CRITICAL: After ANY code changes** - run `./test.sh` to rebuild, restart, and check logs
 7. **Monitor logs from both sources** - Voicify service and GNOME Shell extension
+8. **Wait for processing completion** - Always add sleep before checking logs to ensure full processing
 
 ## Important
 
