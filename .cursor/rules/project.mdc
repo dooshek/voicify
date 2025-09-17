@@ -60,6 +60,23 @@ Configuration is managed through:
 ### Build and Development
 - **Main binary**: `go build -o bin/voicify ./cmd/voicify`
 - **Interactive setup**: Linear setup is integrated into main application
+- **Service management**: Voicify runs as systemd user service
+
+### Testing and Restart Procedures
+- **CRITICAL: After ANY changes** (Go backend OR extension): Run `./test.sh`
+- **The test.sh script automatically**:
+  1. Checks for Go changes and rebuilds if needed
+  2. Restarts Voicify service if rebuilt
+  3. Syncs extension files to GNOME
+  4. Reloads extension
+  5. Shows all relevant logs (backend + extension)
+- **Manual commands** (if needed):
+  - Rebuild: `go build -o bin/voicify ./cmd/voicify`
+  - Restart service: `systemctl --user restart voicify`
+  - Check logs: `tail -f ~/.config/voicify/voicify.log`
+- **Service status**: `systemctl --user status voicify`
+- **Log monitoring**: `journalctl --user -u voicify -f` for systemd logs
+- **Extension logs**: `journalctl --user -u gnome-shell -f` for GNOME Shell errors
 
 ### TTS System
 - **Voice mapping**: Automatic gender detection (alloy=female, echo=male, etc.)
@@ -74,18 +91,8 @@ Configuration is managed through:
 3. **Use proper error handling** with logger functions
 4. **Follow the plugin interface** for consistency across plugins
 5. **Personal Access Tokens must be stored in config** for Linear MCP integration
-
-## Important
-
-**CRITICAL RULE: Always update this project.mdc file whenever project assumptions, architecture, or key patterns change. This file must be kept current to reflect the actual state of the project.**
-
-## Key Development Rules
-
-1. **Always check logger function signatures** before using them
-2. **Test compilation frequently** - logger errors are common and must be caught early
-3. **Use proper error handling** with logger functions
-4. **Follow the plugin interface** for consistency across plugins
-5. **Personal Access Tokens must be stored in config** for Linear MCP integration
+6. **CRITICAL: After ANY code changes** - run `./test.sh` to rebuild, restart, and check logs
+7. **Monitor logs from both sources** - Voicify service and GNOME Shell extension
 
 ## Important
 

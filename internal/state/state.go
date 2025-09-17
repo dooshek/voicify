@@ -16,6 +16,10 @@ type AppState struct {
 	ttsManager    interface{} // Use interface{} to avoid import cycle, will be *tts.Manager
 	router        interface{} // Use interface{} to avoid import cycle, will be *transcriptionrouter.Router
 	linearMCPClient interface{} // Use interface{} to avoid import cycle, will be *linear.LinearMCPClient
+    // Focused window cache provided by GNOME extension via D-Bus
+    focusedWindowTitle string
+    focusedWindowApp   string
+    mu                 sync.RWMutex
 }
 
 func Init(cfg *types.Config) {
@@ -77,4 +81,21 @@ func (s *AppState) SetLinearMCPClient(client interface{}) {
 // GetLinearMCPClient returns the global Linear MCP client from state
 func (s *AppState) GetLinearMCPClient() interface{} {
 	return s.linearMCPClient
+}
+
+// SetFocusedWindow updates cached info about the focused window
+func (s *AppState) SetFocusedWindow(title string, app string) {
+    s.mu.Lock()
+    s.focusedWindowTitle = title
+    s.focusedWindowApp = app
+    s.mu.Unlock()
+}
+
+// GetFocusedWindow returns cached focused window info (title, app)
+func (s *AppState) GetFocusedWindow() (string, string) {
+    s.mu.RLock()
+    title := s.focusedWindowTitle
+    app := s.focusedWindowApp
+    s.mu.RUnlock()
+    return title, app
 }

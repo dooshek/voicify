@@ -12,6 +12,10 @@
     color: #27ae60;
 }
 
+.system-status-icon.canceled {
+    color: #e74c3c;
+}
+
 /* Wave overlay widget */
 .voicify-wave-overlay {
     background-color: rgba(0, 0, 0, 0.7);
@@ -27,6 +31,10 @@
 
 .voicify-wave-overlay.finished {
     background-color: rgba(24, 134, 83, 0.7);
+}
+
+.voicify-wave-overlay.canceled {
+    background-color: rgba(231, 76, 60, 0.7);
 }
 
 .voicify-wave-container {

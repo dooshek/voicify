@@ -1,7 +1,10 @@
 package plugin
 
 import (
+	"strings"
+
 	"github.com/dooshek/voicify/internal/logger"
+	"github.com/dooshek/voicify/internal/state"
 	"github.com/dooshek/voicify/pkg/pluginapi"
 )
 
@@ -40,8 +43,12 @@ func (p *VSCodePlugin) GetActions(transcription string) []pluginapi.PluginAction
 func (a *VSCodeAction) Execute(transcription string) error {
 	logger.Debugf("VSCode plugin: Checking if VSCode should execute action for transcription: %s", transcription)
 
-	if !IsAppFocused("VSC") {
-		logger.Debug("VSCode plugin: VSCode is not open, skipping action")
+	// Use cached focused window from state instead of xdotool
+	title, app := state.Get().GetFocusedWindow()
+	logger.Debugf("VSCode plugin: Cached focused window - title: %s, app: %s", title, app)
+
+	if !strings.Contains(app, "code") && !strings.Contains(title, "VSC") {
+		logger.Debug("VSCode plugin: VSCode is not focused, skipping action")
 		return nil
 	}
 

@@ -40,6 +40,7 @@ func init() {
 
 type Recorder struct {
 	isRecording        bool
+	cancelled          bool
 	recordingStartTime time.Time
 	transcriber        *transcriber.Transcriber
 	notifier           notification.Notifier
@@ -96,6 +97,7 @@ func (r *Recorder) Start() {
 	}
 
 	r.isRecording = true
+	r.cancelled = false
 	r.recordingStartTime = time.Now()
 	go r.record()
 	go r.updateRecordingTime()
@@ -119,6 +121,19 @@ func (r *Recorder) Stop() (string, error) {
 	result := <-r.resultChan
 
 	return result.transcription, result.err
+}
+
+// Cancel cancels the current recording without processing
+func (r *Recorder) Cancel() {
+	if !r.isRecording {
+		return
+	}
+
+	logger.Debugf("Cancelling recording")
+	r.isRecording = false
+	r.cancelled = true
+
+	r.notifier.PlayStopBeep()
 }
 
 func (r *Recorder) record() {
@@ -155,6 +170,12 @@ func (r *Recorder) record() {
 
 	for r.isRecording {
 		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Check if recording was cancelled
+	if r.cancelled {
+		logger.Debugf("Recording was cancelled, discarding audio data")
+		return
 	}
 
 	timestamp := time.Now().Format("2006-01-02_15-04-05")

@@ -12,13 +12,15 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
 const SHORTCUT_KEY = '<Ctrl><Super>v';
+const CANCEL_SHORTCUT_KEY = '<Ctrl><Super>x';
 
 // Recording states
 const State = {
     IDLE: 'idle',
     RECORDING: 'recording',
     UPLOADING: 'uploading',
-    FINISHED: 'finished'
+    FINISHED: 'finished',
+    CANCELED: 'canceled'
 };
 
 // D-Bus interface definition
@@ -29,6 +31,11 @@ const VoicifyDBusInterface = `
     <method name="GetStatus">
       <arg name="is_recording" type="b" direction="out"/>
     </method>
+    <method name="CancelRecording"/>
+    <method name="UpdateFocusedWindow">
+      <arg name="title" type="s" direction="in"/>
+      <arg name="app" type="s" direction="in"/>
+    </method>
     <signal name="RecordingStarted"/>
     <signal name="TranscriptionReady">
       <arg name="text" type="s"/>
@@ -36,6 +43,7 @@ const VoicifyDBusInterface = `
     <signal name="RecordingError">
       <arg name="error" type="s"/>
     </signal>
+    <signal name="RecordingCancelled"/>
   </interface>
 </node>`;
 
@@ -47,6 +55,7 @@ export default class VoicifyExtension extends Extension {
         this._indicator = null;
         this._icon = null;
         this._action = null;
+        this._cancelAction = null;
         this._state = State.IDLE;
         this._timeoutId = null;
         this._waveWidget = null;
@@ -56,6 +65,7 @@ export default class VoicifyExtension extends Extension {
         this._finishedTimer = null;
         this._dbusProxy = null;
         this._lastShortcutTime = 0;
+        this._lastCancelTime = 0;
         this._debounceMs = 500; // Prevent multiple calls within 500ms
     }
 
@@ -68,8 +78,9 @@ export default class VoicifyExtension extends Extension {
         // Create panel indicator
         this._createIndicator();
 
-        // Set up global shortcut
+        // Set up global shortcuts
         this._setupGlobalShortcut();
+        this._setupCancelShortcut();
     }
 
     disable() {
@@ -96,7 +107,7 @@ export default class VoicifyExtension extends Extension {
             this._finishedTimer = null;
         }
 
-        // Clean up global shortcut
+        // Clean up global shortcuts
         if (this._action !== null) {
             global.display.ungrab_accelerator(this._action);
             Main.wm.allowKeybinding(
@@ -104,6 +115,15 @@ export default class VoicifyExtension extends Extension {
                 Shell.ActionMode.NONE
             );
             this._action = null;
+        }
+
+        if (this._cancelAction !== null) {
+            global.display.ungrab_accelerator(this._cancelAction);
+            Main.wm.allowKeybinding(
+                Meta.external_binding_name_for_action(this._cancelAction),
+                Shell.ActionMode.NONE
+            );
+            this._cancelAction = null;
         }
 
         // Clean up wave widget
@@ -163,6 +183,27 @@ export default class VoicifyExtension extends Extension {
         console.debug('Global shortcut registered:', SHORTCUT_KEY);
     }
 
+    _setupCancelShortcut() {
+        this._cancelAction = global.display.grab_accelerator(CANCEL_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
+
+        if (this._cancelAction == Meta.KeyBindingAction.NONE) {
+            console.error('Unable to grab accelerator for Voicify Cancel');
+            return;
+        }
+
+        const name = Meta.external_binding_name_for_action(this._cancelAction);
+        Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
+
+        // Connect to accelerator activated signal
+        global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
+            if (action === this._cancelAction) {
+                this._onCancelPressed();
+            }
+        });
+
+        console.debug('Cancel shortcut registered:', CANCEL_SHORTCUT_KEY);
+    }
+
     _onShortcutPressed() {
         const currentTime = Date.now();
 
@@ -190,6 +231,26 @@ export default class VoicifyExtension extends Extension {
         }
     }
 
+    _onCancelPressed() {
+        const currentTime = Date.now();
+
+        // Debounce: ignore if called too quickly after the last call
+        if (currentTime - this._lastCancelTime < this._debounceMs) {
+            console.debug('🔥 CANCEL DEBOUNCED - ignoring rapid call');
+            return;
+        }
+        this._lastCancelTime = currentTime;
+
+        console.log('🔥 CANCEL PRESSED! Current state:', this._state);
+
+        // Only cancel if currently recording
+        if (this._state === State.RECORDING) {
+            this._cancelRecording();
+        } else {
+            console.debug('Not recording - cancel ignored');
+        }
+    }
+
     _startRecording() {
         console.log('🔥 _startRecording() called - calling D-Bus ToggleRecording');
 
@@ -197,6 +258,9 @@ export default class VoicifyExtension extends Extension {
             console.error('D-Bus proxy not initialized');
             return;
         }
+
+        // Update focused window before starting recording
+        this._updateFocusedWindowInDaemon();
 
         // Call D-Bus method to toggle recording
         this._dbusProxy.ToggleRecordingAsync()
@@ -220,6 +284,9 @@ export default class VoicifyExtension extends Extension {
             return;
         }
 
+        // Update focused window before stopping recording
+        this._updateFocusedWindowInDaemon();
+
         // Switch to uploading state immediately
         this._state = State.UPLOADING;
         this._updateIndicator();
@@ -240,6 +307,37 @@ export default class VoicifyExtension extends Extension {
             });
     }
 
+    _cancelRecording() {
+        console.log('🔥 _cancelRecording() called - calling D-Bus CancelRecording');
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        // Update focused window before canceling recording
+        this._updateFocusedWindowInDaemon();
+
+        // Switch to canceled state immediately
+        this._state = State.CANCELED;
+        this._updateIndicator();
+        this._updateWaveWidget();
+
+        // Call D-Bus method to cancel recording
+        this._dbusProxy.CancelRecordingAsync()
+            .then(() => {
+                console.debug('D-Bus: CancelRecording method called successfully');
+                // State will be updated via RecordingCancelled signal
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to call CancelRecording:', error);
+                // Reset state on error
+                this._state = State.IDLE;
+                this._updateIndicator();
+                this._hideWaveWidget();
+            });
+    }
+
     _onTranscriptionReady(text) {
         this._state = State.FINISHED;
         this._updateIndicator();
@@ -250,6 +348,13 @@ export default class VoicifyExtension extends Extension {
         // Just copy to clipboard for manual paste if needed
         // St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
         // console.debug('Text copied to clipboard for manual paste:', text);
+    }
+
+    _onRecordingCancelled() {
+        this._state = State.CANCELED;
+        this._updateIndicator();
+        this._startCanceledAnimation();
+        console.debug('Recording cancelled');
     }
 
     _performAutoPaste() {
@@ -295,6 +400,11 @@ export default class VoicifyExtension extends Extension {
             case State.FINISHED:
                 this._icon.icon_name = 'emblem-ok-symbolic';
                 this._icon.style_class = 'system-status-icon finished';
+                break;
+
+            case State.CANCELED:
+                this._icon.icon_name = 'process-stop-symbolic';
+                this._icon.style_class = 'system-status-icon canceled';
                 break;
         }
     }
@@ -446,6 +556,58 @@ export default class VoicifyExtension extends Extension {
         });
     }
 
+    _startCanceledAnimation() {
+        // Stop upload animation
+        if (this._uploadTimer) {
+            GLib.Source.remove(this._uploadTimer);
+            this._uploadTimer = null;
+        }
+
+        if (!this._waveWidget || !this._waveBars) return;
+
+        // Change widget class to canceled
+        this._waveWidget.style_class = 'voicify-wave-overlay canceled';
+
+        console.debug('Starting canceled animation - start at 100% then shrink to 0');
+
+        // Set all bars to 100% immediately
+        this._waveBars.forEach(bar => {
+            bar.scale_y = 1.2; // Start at max scale
+        });
+
+        // Short pause then animate down to 0
+        this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+            this._finishedTimer = null;
+
+            let phase = 0;
+            this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+                // Animate all bars down to 0 simultaneously
+                const progress = phase / 25;
+                const scale = 1.2 * (1 - progress); // Shrink from max to 0
+
+                this._waveBars.forEach(bar => {
+                    bar.scale_y = Math.max(0.05, scale);
+                });
+
+                phase++;
+
+                if (phase >= 25) {
+                    // Animation complete - hide widget and reset
+                    this._finishedTimer = null;
+                    this._state = State.IDLE;
+                    this._updateIndicator();
+                    this._hideWaveWidget();
+                    console.debug('Canceled animation complete - back to idle');
+                    return GLib.SOURCE_REMOVE;
+                }
+
+                return GLib.SOURCE_CONTINUE;
+            });
+
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _startWaveAnimation() {
         if (!this._waveBars) return;
 
@@ -555,6 +717,49 @@ export default class VoicifyExtension extends Extension {
             this._hideWaveWidget();
         });
 
+        this._dbusProxy.connectSignal('RecordingCancelled', () => {
+            console.debug('D-Bus: Recording cancelled signal received');
+            this._onRecordingCancelled();
+        });
+
         console.debug('D-Bus proxy initialized');
+    }
+
+    _getFocusedWindow() {
+        try {
+            // Get focused window using Shell's window tracker
+            const windowTracker = Shell.WindowTracker.get_default();
+            const focusedWindow = global.display.get_focus_window();
+
+            if (!focusedWindow) {
+                return { title: '', app: '' };
+            }
+
+            const title = focusedWindow.get_title() || '';
+            const app = focusedWindow.get_wm_class() || '';
+
+            console.debug(`Focused window - title: "${title}", app: "${app}"`);
+            return { title, app };
+        } catch (error) {
+            console.error('Error getting focused window:', error);
+            return { title: '', app: '' };
+        }
+    }
+
+    _updateFocusedWindowInDaemon() {
+        const { title, app } = this._getFocusedWindow();
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        this._dbusProxy.UpdateFocusedWindowAsync(title, app)
+            .then(() => {
+                console.debug('D-Bus: UpdateFocusedWindow called successfully');
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to call UpdateFocusedWindow:', error);
+            });
     }
 }

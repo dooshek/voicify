@@ -8,6 +8,7 @@ import (
 	"github.com/dooshek/voicify/internal/audio"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
+	"github.com/dooshek/voicify/internal/state"
 	"github.com/dooshek/voicify/internal/transcriptionrouter"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
@@ -76,7 +77,7 @@ func (s *Server) Start() error {
 	node := &introspect.Node{
 		Name: dbusObjectPath,
 		Interfaces: []introspect.Interface{{
-			Name:    dbusInterface,
+			Name: dbusInterface,
 			Methods: []introspect.Method{
 				{
 					Name: "ToggleRecording",
@@ -85,6 +86,16 @@ func (s *Server) Start() error {
 					Name: "GetStatus",
 					Args: []introspect.Arg{
 						{Name: "is_recording", Type: "b", Direction: "out"},
+					},
+				},
+				{
+					Name: "CancelRecording",
+				},
+				{
+					Name: "UpdateFocusedWindow",
+					Args: []introspect.Arg{
+						{Name: "title", Type: "s", Direction: "in"},
+						{Name: "app", Type: "s", Direction: "in"},
 					},
 				},
 			},
@@ -102,6 +113,7 @@ func (s *Server) Start() error {
 						{Name: "error", Type: "s"},
 					},
 				},
+				{Name: "RecordingCancelled"},
 			},
 		}},
 	}
@@ -159,6 +171,36 @@ func (s *Server) ToggleRecording() *dbus.Error {
 // GetStatus returns current recording status (D-Bus method)
 func (s *Server) GetStatus() (bool, *dbus.Error) {
 	return s.recorder.IsRecording(), nil
+}
+
+// CancelRecording cancels the current recording (D-Bus method)
+func (s *Server) CancelRecording() *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debugf("D-Bus: CancelRecording called")
+
+	if !s.recorder.IsRecording() {
+		logger.Debugf("D-Bus: No recording in progress, cancel is no-op")
+		return nil
+	}
+
+	logger.Debugf("D-Bus: Cancelling recording")
+	s.recorder.Cancel()
+
+	// Emit signal
+	s.emitSignal("RecordingCancelled")
+
+	return nil
+}
+
+// UpdateFocusedWindow updates the cached focused window info (D-Bus method)
+func (s *Server) UpdateFocusedWindow(title string, app string) *dbus.Error {
+	logger.Debugf("D-Bus: UpdateFocusedWindow called - title: %s, app: %s", title, app)
+
+	state.Get().SetFocusedWindow(title, app)
+
+	return nil
 }
 
 // stopRecordingAsync stops recording and handles transcription in background
