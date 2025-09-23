@@ -11,6 +11,9 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
+// Visualization update interval (ms) for level bars shifting
+const LEVEL_UPDATE_INTERVAL_MS = 60;
+
 const SHORTCUT_KEY = '<Ctrl><Super>v';
 const CANCEL_SHORTCUT_KEY = '<Ctrl><Super>x';
 
@@ -44,6 +47,9 @@ const VoicifyDBusInterface = `
       <arg name="error" type="s"/>
     </signal>
     <signal name="RecordingCancelled"/>
+    <signal name="InputLevel">
+      <arg name="level" type="d"/>
+    </signal>
   </interface>
 </node>`;
 
@@ -64,6 +70,8 @@ export default class VoicifyExtension extends Extension {
         this._uploadTimer = null;
         this._finishedTimer = null;
         this._dbusProxy = null;
+        this._levels = [];
+        this._levelTimer = null;
         this._lastShortcutTime = 0;
         this._lastCancelTime = 0;
         this._debounceMs = 500; // Prevent multiple calls within 500ms
@@ -105,6 +113,11 @@ export default class VoicifyExtension extends Extension {
         if (this._finishedTimer) {
             GLib.Source.remove(this._finishedTimer);
             this._finishedTimer = null;
+        }
+
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
         }
 
         // Clean up global shortcuts
@@ -442,7 +455,7 @@ export default class VoicifyExtension extends Extension {
             const bar = new St.Widget({
                 style_class: `voicify-wave-bar`,
                 width: 4,
-                height: 15, // Increased by 50%
+                height: 15,
                 visible: true,
             });
             this._waveBars.push(bar);
@@ -450,7 +463,6 @@ export default class VoicifyExtension extends Extension {
             console.log(`🔥 Created bar ${i} with height: ${bar.height}`);
         }
 
-        // Set fixed container size - increased by 50%
         waveContainer.set_size(75, 30);
 
         this._waveWidget.add_child(waveContainer);
@@ -467,8 +479,8 @@ export default class VoicifyExtension extends Extension {
 
         console.debug(`Wave widget positioned at: ${monitor.x + monitor.width / 2 - 60}, ${monitor.y + monitor.height * 0.98 - 12}`);
 
-        // Start recording animation
-        this._startWaveAnimation();
+        // Initialize bars and start level-driven rendering
+        this._initFlatBars();
     }
 
     _updateWaveWidget() {
@@ -476,6 +488,7 @@ export default class VoicifyExtension extends Extension {
 
         // Change to upload animation
         this._waveWidget.style_class = 'voicify-wave-overlay uploading';
+        this._stopLevelWave();
         this._startUploadAnimation();
     }
 
@@ -496,6 +509,11 @@ export default class VoicifyExtension extends Extension {
             this._finishedTimer = null;
         }
 
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
+        }
+
         if (this._waveWidget) {
             this._waveWidget.destroy();
             this._waveWidget = null;
@@ -509,6 +527,10 @@ export default class VoicifyExtension extends Extension {
         if (this._uploadTimer) {
             GLib.Source.remove(this._uploadTimer);
             this._uploadTimer = null;
+        }
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
         }
 
         if (!this._waveWidget || !this._waveBars) return;
@@ -562,6 +584,10 @@ export default class VoicifyExtension extends Extension {
             GLib.Source.remove(this._uploadTimer);
             this._uploadTimer = null;
         }
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
+        }
 
         if (!this._waveWidget || !this._waveBars) return;
 
@@ -609,50 +635,8 @@ export default class VoicifyExtension extends Extension {
     }
 
     _startWaveAnimation() {
-        if (!this._waveBars) return;
-
-        console.debug('Starting JavaScript equalizer animation');
-
-        // Each bar gets its own animation timer
-        this._barTimers = [];
-
-        this._waveBars.forEach((bar, index) => {
-            const minScale = 0.2;
-            const maxScale = 0.7 + Math.random() * 0.7; // SMALLER max scale
-            const speed = 30 + Math.random() * 60;      // 15% slower speed
-
-            let scale = minScale;
-            let direction = 1;
-
-            // Set pivot point to bottom for scaling from bottom up
-            bar.set_pivot_point(0.5, 1.0); // X center, Y bottom
-
-            console.log(`🔥 Bar ${index}: speed=${speed}, maxScale=${maxScale.toFixed(2)}`);
-
-            const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, speed, () => {
-                if (this._state !== State.RECORDING) {
-                    return GLib.SOURCE_REMOVE;
-                }
-
-                // Animate scale up and down
-                scale += direction * (0.1 + Math.random() * 0.2);
-
-                if (scale >= maxScale) {
-                    scale = maxScale;
-                    direction = -1;
-                } else if (scale <= minScale) {
-                    scale = minScale;
-                    direction = 1;
-                }
-
-                // Scale from bottom up using pivot point
-                bar.scale_y = scale;
-
-                return GLib.SOURCE_CONTINUE;
-            });
-
-            this._barTimers.push(timer);
-        });
+        // replaced by level-driven wave
+        return;
     }
 
     _startUploadAnimation() {
@@ -660,6 +644,10 @@ export default class VoicifyExtension extends Extension {
         if (this._barTimers) {
             this._barTimers.forEach(timer => GLib.Source.remove(timer));
             this._barTimers = [];
+        }
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
         }
 
         if (!this._waveBars) return;
@@ -699,10 +687,11 @@ export default class VoicifyExtension extends Extension {
 
         // Connect to D-Bus signals
         this._dbusProxy.connectSignal('RecordingStarted', () => {
-            console.debug('D-Bus: Recording started signal received');
+            console.debug('🔥 D-Bus: Recording started signal received, changing state to RECORDING');
             this._state = State.RECORDING;
             this._updateIndicator();
             this._showWaveWidget();
+            this._startLevelWave();
         });
 
         this._dbusProxy.connectSignal('TranscriptionReady', (proxy, sender, [text]) => {
@@ -714,6 +703,7 @@ export default class VoicifyExtension extends Extension {
             console.error('D-Bus: Recording error signal received:', error);
             this._state = State.IDLE;
             this._updateIndicator();
+            this._stopLevelWave();
             this._hideWaveWidget();
         });
 
@@ -722,7 +712,68 @@ export default class VoicifyExtension extends Extension {
             this._onRecordingCancelled();
         });
 
-        console.debug('D-Bus proxy initialized');
+        // Live input level
+        this._dbusProxy.connectSignal('InputLevel', (proxy, sender, [level]) => {
+            console.debug('🔥 D-Bus: InputLevel signal received:', level, 'state:', this._state);
+            if (this._state !== State.RECORDING) {
+                console.debug('🔥 InputLevel ignored - not in RECORDING state');
+                return;
+            }
+            if (typeof level === 'number' && isFinite(level)) {
+                console.debug('🔥 Pushing level to visualization:', level);
+                this._pushLevel(level);
+            } else {
+                console.debug('🔥 Invalid level value:', level, 'type:', typeof level);
+            }
+        });
+
+        console.debug('🔥 D-Bus proxy initialized with signals connected');
+    }
+
+    _initFlatBars() {
+        if (!this._waveBars) return;
+        this._levels = [];
+        for (let i = 0; i < this._waveBars.length; i++) this._levels.push(0);
+        this._waveBars.forEach(bar => {
+            bar.set_pivot_point(0.5, 1.0);
+            bar.scale_y = 0.2;
+        });
+    }
+
+    _pushLevel(level) {
+        if (!this._waveBars) return;
+        this._levels.push(Math.max(0.05, Math.min(1.2, level)));
+        if (this._levels.length > this._waveBars.length) {
+            this._levels.shift();
+        }
+    }
+
+    _startLevelWave() {
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
+        }
+        this._initFlatBars();
+        this._levelTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LEVEL_UPDATE_INTERVAL_MS, () => {
+            if (this._state !== State.RECORDING || !this._waveBars) {
+                return GLib.SOURCE_REMOVE;
+            }
+            const n = this._waveBars.length;
+            for (let i = 0; i < n; i++) {
+                const levelIdx = this._levels.length - 1 - i;
+                const val = levelIdx >= 0 ? this._levels[levelIdx] : 0.05;
+                this._waveBars[n - 1 - i].scale_y = Math.max(0.05, Math.min(1.2, val));
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopLevelWave() {
+        if (this._levelTimer) {
+            GLib.Source.remove(this._levelTimer);
+            this._levelTimer = null;
+        }
+        this._levels = [];
     }
 
     _getFocusedWindow() {
