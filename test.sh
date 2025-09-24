@@ -14,18 +14,12 @@ echo -e "\n🔄 Checking for Go backend changes..."
 if [ ! -f "bin/voicify" ] || [ "cmd/voicify/main.go" -nt "bin/voicify" ] || find internal/ -name "*.go" -newer "bin/voicify" | grep -q .; then
     echo "🔨 Go backend changes detected, rebuilding..."
     go build -o bin/voicify ./cmd/voicify
-    if [ $? -eq 0 ]; then
-        echo "✅ Build successful, restarting Voicify service..."
-        systemctl --user restart voicify
-        sleep 2
-        echo "✅ Service restarted"
-    else
-        echo "❌ Build failed!"
-        exit 1
-    fi
 else
     echo "✅ No Go backend changes detected"
 fi
+
+systemctl --user start voicify
+systemctl --user restart voicify
 
 echo -e "\n🔄 Syncing extension from repo to GNOME..."
 rsync -av --delete \
@@ -49,41 +43,23 @@ echo "📁 Extension files synchronized:"
 ls -la "$GNOME_EXT_DIR/"
 
 echo -e "\n🔄 Reloading extension... Press ALT+F2 and type r"
-read -n 1 -s -r -p "Press any key to continue"
-gnome-extensions disable voicify@dooshek.com 2>/dev/null || true
-sleep 1
-gnome-extensions enable voicify@dooshek.com
+echo "Waiting 10 seconds for extension to reload..."
 
-echo -e "\n📊 Extension status:"
-gnome-extensions info voicify@dooshek.com | grep -E "(State|Enabled)"
-
-echo -e "\n🔍 Checking for errors in logs..."
-ERROR_LOG=$(journalctl --user --since "2 minutes ago" -p err -p warning | grep -A2 -B2 "voicify@dooshek.com\|JS ERROR.*voicify\|extension.*error" | tail -10)
-
-if [ ! -z "$ERROR_LOG" ]; then
-    echo "❌ ERRORS FOUND:"
-    echo "$ERROR_LOG"
-else
-    echo "✅ No errors found in logs"
-fi
-
-echo -e "\n📋 ALL LOGS SINCE SCRIPT START ($START_TIME):"
 echo "================================================"
-ALL_LOGS=$(journalctl --user --since "$START_TIME" | grep -E "(🔥|voicify|Voicify|extension.*enabled|extension.*disabled|JS ERROR|JS WARNING)" | tail -20)
+echo "🎙️ Now start recording and test the flow!"
+echo "================================================"
 
-if [ ! -z "$ALL_LOGS" ]; then
-    echo "$ALL_LOGS"
-else
-    echo "❌ No extension logs found - check if extension is really working"
-fi
-
-echo -e "\n🔍 Checking Voicify backend logs..."
 if [ -f ~/.config/voicify/voicify.log ]; then
-    echo "⏳ Waiting 5 seconds for processing to complete..."
-    sleep 5
+    echo "⏳ Waiting 15 seconds for logs to be written..."
+    sleep 15
     echo "📄 Recent Voicify logs (last 20 lines):"
     echo "================================================"
-    tail -20 ~/.config/voicify/voicify.log
+    tail -100 ~/.config/voicify/voicify.log
+    echo "================================================"
+    echo "🔍 Checking extension logs..."
+    echo "================================================"
+    journalctl --user --since "2 minutes ago" -p err -p warning | grep -A2 -B2 "voicify@dooshek.com\|JS ERROR.*voicify\|extension.*error" | tail -10
+    echo "================================================"
     echo ""
     echo "💡 To watch logs live: tail -f ~/.config/voicify/voicify.log"
     echo "💡 Service status: systemctl --user status voicify"

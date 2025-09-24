@@ -27,6 +27,8 @@ type Server struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	mu       sync.Mutex
+	// level forwarding
+	levelForwardCancel context.CancelFunc
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
@@ -114,6 +116,12 @@ func (s *Server) Start() error {
 					},
 				},
 				{Name: "RecordingCancelled"},
+				{
+					Name: "InputLevel",
+					Args: []introspect.Arg{
+						{Name: "level", Type: "d"},
+					},
+				},
 			},
 		}},
 	}
@@ -159,6 +167,9 @@ func (s *Server) ToggleRecording() *dbus.Error {
 		// Emit signal
 		s.emitSignal("RecordingStarted")
 
+		// Start forwarding input levels
+		s.startForwardingLevels()
+
 	} else {
 		logger.Debugf("D-Bus: Recording already in progress, stopping")
 		// Process transcription in background to avoid blocking D-Bus call
@@ -188,6 +199,9 @@ func (s *Server) CancelRecording() *dbus.Error {
 	logger.Debugf("D-Bus: Cancelling recording")
 	s.recorder.Cancel()
 
+	// Stop forwarding input levels immediately on cancel
+	s.stopForwardingLevels()
+
 	// Emit signal
 	s.emitSignal("RecordingCancelled")
 
@@ -214,6 +228,9 @@ func (s *Server) stopRecordingAsync() {
 			s.emitSignal("RecordingError", err.Error())
 			return
 		}
+
+		// Stop forwarding levels after recording stops
+		s.stopForwardingLevels()
 
 		logger.Debugf("D-Bus: Transcription received: %s", transcription)
 
@@ -242,8 +259,43 @@ func (s *Server) emitSignal(name string, args ...interface{}) {
 
 	err := s.conn.Emit(signalPath, signalName, args...)
 	if err != nil {
-		logger.Errorf("D-Bus: Failed to emit signal %s: %v", err, name)
+		logger.Errorf("D-Bus: Failed to emit signal %s", err, name)
 	} else {
-		logger.Debugf("D-Bus: Emitted signal: %s", name)
+		if name == "InputLevel" && len(args) > 0 {
+			logger.Debugf("D-Bus: Emitted signal: %s with value: %v", name, args[0])
+		} else {
+			logger.Debugf("D-Bus: Emitted signal: %s", name)
+		}
+	}
+}
+
+// startForwardingLevels begins reading from recorder.LevelChan() and emits InputLevel signals
+func (s *Server) startForwardingLevels() {
+	if s.levelForwardCancel != nil {
+		// already forwarding
+		return
+	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.levelForwardCancel = cancel
+
+	go func() {
+		levelCh := s.recorder.LevelChan()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case level := <-levelCh:
+				// Emit on D-Bus; ignore errors here
+				s.emitSignal("InputLevel", level)
+			}
+		}
+	}()
+}
+
+// stopForwardingLevels stops the level forwarding goroutine
+func (s *Server) stopForwardingLevels() {
+	if s.levelForwardCancel != nil {
+		s.levelForwardCancel()
+		s.levelForwardCancel = nil
 	}
 }

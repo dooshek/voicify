@@ -27,5 +27,11 @@
       <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="recording_error"/>
       <arg name="error" type="s"/>
     </signal>
+
+    <!-- Live input level during recording (double in range ~[0.0, 1.2]) -->
+    <signal name="InputLevel">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="input_level"/>
+      <arg name="level" type="d"/>
+    </signal>
   </interface>
 </node>
