@@ -34,10 +34,10 @@ const OVERLAY_BORDER = 2;
 const CONTAINER_PADDING_TOP = 8;
 const CONTAINER_PADDING_RIGHT = 0;
 const CONTAINER_PADDING_BOTTOM = 0;
-const CONTAINER_PADDING_LEFT = 7;
+const CONTAINER_PADDING_LEFT = 8;
 
 // Calculated automatically
-const CONTAINER_WIDTH = 130;
+const CONTAINER_WIDTH = 131;
 const BAR_HEIGHT = (CONTAINER_HEIGHT / 2) + 1;
 
 // Recording statesSprawdzam teraz jak to działa, trochę się rwie.
