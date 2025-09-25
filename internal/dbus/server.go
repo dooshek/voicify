@@ -22,30 +22,46 @@ const (
 
 // Server implements D-Bus service for voicify recording
 type Server struct {
-	conn     *dbus.Conn
-	recorder *audio.Recorder
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
+	conn             *dbus.Conn
+	recorder         *audio.Recorder
+	realtimeRecorder *audio.RealtimeRecorder
+	isRealtimeMode   bool
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
 	// level forwarding
 	levelForwardCancel context.CancelFunc
+	// realtime transcription forwarding
+	realtimeForwardCancel context.CancelFunc
+	// accumulated realtime transcription across complete chunks
+	realtimeAccum string
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
 func NewServer() (*Server, error) {
 	// Use silent notifier for daemon mode - extension handles all UI
 	silentNotifier := notification.NewSilent()
+
+	// Initialize regular recorder
 	recorder, err := audio.NewRecorderWithNotifier(silentNotifier)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize recorder: %w", err)
 	}
 
+	// Initialize realtime recorder
+	realtimeRecorder, err := audio.NewRealtimeRecorderWithNotifier(silentNotifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize realtime recorder: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Server{
-		recorder: recorder,
-		ctx:      ctx,
-		cancel:   cancel,
+		recorder:         recorder,
+		realtimeRecorder: realtimeRecorder,
+		isRealtimeMode:   false, // Default to regular recording
+		ctx:              ctx,
+		cancel:           cancel,
 	}, nil
 }
 
@@ -85,6 +101,9 @@ func (s *Server) Start() error {
 					Name: "ToggleRecording",
 				},
 				{
+					Name: "StartRealtimeRecording",
+				},
+				{
 					Name: "GetStatus",
 					Args: []introspect.Arg{
 						{Name: "is_recording", Type: "b", Direction: "out"},
@@ -105,6 +124,18 @@ func (s *Server) Start() error {
 				{Name: "RecordingStarted"},
 				{
 					Name: "TranscriptionReady",
+					Args: []introspect.Arg{
+						{Name: "text", Type: "s"},
+					},
+				},
+				{
+					Name: "PartialTranscription",
+					Args: []introspect.Arg{
+						{Name: "text", Type: "s"},
+					},
+				},
+				{
+					Name: "CompleteTranscription",
 					Args: []introspect.Arg{
 						{Name: "text", Type: "s"},
 					},
@@ -159,9 +190,12 @@ func (s *Server) ToggleRecording() *dbus.Error {
 
 	logger.Debugf("D-Bus: ToggleRecording called")
 
+	// Always use regular recording for toggle mode
+	s.isRealtimeMode = false
+
 	if !s.recorder.IsRecording() {
 		// Start recording
-		logger.Debugf("D-Bus: Starting recording")
+		logger.Debugf("D-Bus: Starting regular recording")
 		s.recorder.Start()
 
 		// Emit signal
@@ -179,9 +213,43 @@ func (s *Server) ToggleRecording() *dbus.Error {
 	return nil
 }
 
+// StartRealtimeRecording starts real-time recording with streaming transcription (D-Bus method)
+func (s *Server) StartRealtimeRecording() *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debugf("D-Bus: StartRealtimeRecording called")
+
+	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
+		return dbus.MakeFailedError(fmt.Errorf("recording already in progress"))
+	}
+
+	s.isRealtimeMode = true
+	// reset accumulator for this session
+	s.realtimeAccum = ""
+
+	// Start real-time recording
+	logger.Debugf("D-Bus: Starting real-time recording")
+	if err := s.realtimeRecorder.Start(); err != nil {
+		logger.Errorf("D-Bus: Failed to start realtime recording", err)
+		return dbus.MakeFailedError(fmt.Errorf("failed to start realtime recording: %w", err))
+	}
+
+	// Emit signal
+	s.emitSignal("RecordingStarted")
+
+	// Start forwarding real-time transcription results
+	s.startForwardingRealtimeTranscription()
+
+	// Start forwarding input levels from realtime recorder
+	s.startForwardingRealtimeLevels()
+
+	return nil
+}
+
 // GetStatus returns current recording status (D-Bus method)
 func (s *Server) GetStatus() (bool, *dbus.Error) {
-	return s.recorder.IsRecording(), nil
+	return s.recorder.IsRecording() || s.realtimeRecorder.IsRecording(), nil
 }
 
 // CancelRecording cancels the current recording (D-Bus method)
@@ -191,16 +259,41 @@ func (s *Server) CancelRecording() *dbus.Error {
 
 	logger.Debugf("D-Bus: CancelRecording called")
 
-	if !s.recorder.IsRecording() {
-		logger.Debugf("D-Bus: No recording in progress, cancel is no-op")
-		return nil
+	if s.isRealtimeMode {
+		if !s.realtimeRecorder.IsRecording() {
+			logger.Debugf("D-Bus: No realtime recording in progress, cancel is no-op")
+			return nil
+		}
+
+		logger.Debugf("D-Bus: Cancelling realtime recording")
+		s.realtimeRecorder.Cancel()
+		s.stopForwardingRealtimeTranscription()
+		s.stopForwardingRealtimeLevels()
+
+		// After cancelling realtime, route the accumulated transcription if present
+		finalText := s.realtimeAccum
+		s.realtimeAccum = "" // reset for next run
+		if finalText != "" {
+			// Route via router
+			router := transcriptionrouter.New(finalText)
+			if err := router.Route(finalText); err != nil {
+				logger.Errorf("D-Bus: Error routing realtime transcription", err)
+				s.emitSignal("RecordingError", fmt.Sprintf("routing error: %v", err))
+			} else {
+				// Emit final transcription ready for any listeners
+				s.emitSignal("TranscriptionReady", finalText)
+			}
+		}
+	} else {
+		if !s.recorder.IsRecording() {
+			logger.Debugf("D-Bus: No recording in progress, cancel is no-op")
+			return nil
+		}
+
+		logger.Debugf("D-Bus: Cancelling regular recording")
+		s.recorder.Cancel()
+		s.stopForwardingLevels()
 	}
-
-	logger.Debugf("D-Bus: Cancelling recording")
-	s.recorder.Cancel()
-
-	// Stop forwarding input levels immediately on cancel
-	s.stopForwardingLevels()
 
 	// Emit signal
 	s.emitSignal("RecordingCancelled")
@@ -262,7 +355,7 @@ func (s *Server) emitSignal(name string, args ...interface{}) {
 		logger.Errorf("D-Bus: Failed to emit signal %s", err, name)
 	} else {
 		if name == "InputLevel" && len(args) > 0 {
-			logger.Debugf("D-Bus: Emitted signal: %s with value: %v", name, args[0])
+			// logger.Debugf("D-Bus: Emitted signal: %s with value: %v", name, args[0])
 		} else {
 			logger.Debugf("D-Bus: Emitted signal: %s", name)
 		}
@@ -294,6 +387,76 @@ func (s *Server) startForwardingLevels() {
 
 // stopForwardingLevels stops the level forwarding goroutine
 func (s *Server) stopForwardingLevels() {
+	if s.levelForwardCancel != nil {
+		s.levelForwardCancel()
+		s.levelForwardCancel = nil
+	}
+}
+
+// startForwardingRealtimeTranscription starts forwarding realtime transcription results
+func (s *Server) startForwardingRealtimeTranscription() {
+	if s.realtimeForwardCancel != nil {
+		// already forwarding
+		return
+	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.realtimeForwardCancel = cancel
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case complete := <-s.realtimeRecorder.CompleteChan():
+				logger.Debugf("D-Bus: Emitting complete transcription: %s", complete)
+				s.emitSignal("CompleteTranscription", complete)
+				// Accumulate complete chunks for final routing on cancel
+				if s.realtimeAccum == "" {
+					s.realtimeAccum = complete
+				} else {
+					// Add a space/newline between segments
+					s.realtimeAccum = s.realtimeAccum + " " + complete
+				}
+			case err := <-s.realtimeRecorder.ErrorChan():
+				logger.Errorf("D-Bus: Realtime transcription error", err)
+				s.emitSignal("RecordingError", err.Error())
+			}
+		}
+	}()
+}
+
+// stopForwardingRealtimeTranscription stops the realtime transcription forwarding
+func (s *Server) stopForwardingRealtimeTranscription() {
+	if s.realtimeForwardCancel != nil {
+		s.realtimeForwardCancel()
+		s.realtimeForwardCancel = nil
+	}
+}
+
+// startForwardingRealtimeLevels starts forwarding audio levels from realtime recorder
+func (s *Server) startForwardingRealtimeLevels() {
+	if s.levelForwardCancel != nil {
+		// already forwarding
+		return
+	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.levelForwardCancel = cancel
+
+	go func() {
+		levelCh := s.realtimeRecorder.LevelChan()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case level := <-levelCh:
+				s.emitSignal("InputLevel", level)
+			}
+		}
+	}()
+}
+
+// stopForwardingRealtimeLevels stops the realtime level forwarding
+func (s *Server) stopForwardingRealtimeLevels() {
 	if s.levelForwardCancel != nil {
 		s.levelForwardCancel()
 		s.levelForwardCancel = nil

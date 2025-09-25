@@ -11,7 +11,6 @@ import (
 
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/types"
-	"github.com/go-vgo/robotgo"
 )
 
 var ydotoolSocket string
@@ -59,8 +58,8 @@ func PasteWithReturn(text string) error {
 
 	if isX11() {
 		// Use robotgo for X11 - paste with Ctrl+V instead of typing each character
-		robotgo.KeyTap("v", "ctrl")
-		robotgo.KeyTap("enter")
+		// robotgo.KeyTap("v", "ctrl")
+		// robotgo.KeyTap("enter")
 	} else {
 		// Wayland implementation using ydotool
 		// // First press Ctrl+V to paste

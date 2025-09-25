@@ -41,12 +41,12 @@ const (
 	// przy obliczaniu obwiedni. 0 oznacza wyłączone (używane są osobne agcAttackMs/agcReleaseMs).
 	agcEnvelopeSizeMs = 0.0
 	agcTarget         = 1.0
-	agcMaxGain        = 7.5
+	agcMaxGain        = 6.0
 	agcMinGain        = 0.1
 	agcGainAttack     = 0.1
 	agcGainRelease    = 0.02
 	agcNoiseGate      = 0.02
-	agcVisualBoost    = 2.0
+	agcVisualBoost    = 1.0
 	uiMaxLevel        = 1.0
 )
 

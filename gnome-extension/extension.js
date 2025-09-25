@@ -40,6 +40,10 @@ const CONTAINER_PADDING_LEFT = 8;
 const CONTAINER_WIDTH = 131;
 const BAR_HEIGHT = (CONTAINER_HEIGHT / 2) + 1;
 
+// Try virtual keyboard paste (works on X11)
+const seat = Clutter.get_default_backend().get_default_seat();
+const virtualKeyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+
 // Recording statesSprawdzam teraz jak to działa, trochę się rwie.
 
 const State = {
@@ -55,6 +59,7 @@ const VoicifyDBusInterface = `
 <node>
   <interface name="com.dooshek.voicify.Recorder">
     <method name="ToggleRecording"/>
+    <method name="StartRealtimeRecording"/>
     <method name="GetStatus">
       <arg name="is_recording" type="b" direction="out"/>
     </method>
@@ -65,6 +70,12 @@ const VoicifyDBusInterface = `
     </method>
     <signal name="RecordingStarted"/>
     <signal name="TranscriptionReady">
+      <arg name="text" type="s"/>
+    </signal>
+    <signal name="PartialTranscription">
+      <arg name="text" type="s"/>
+    </signal>
+    <signal name="CompleteTranscription">
       <arg name="text" type="s"/>
     </signal>
     <signal name="RecordingError">
@@ -98,6 +109,8 @@ export default class VoicifyExtension extends Extension {
         this._levelTimer = null;
         this._lastShortcutTime = 0;
         this._lastCancelTime = 0;
+        this._isRealtimeMode = true; // Back to real-time mode with fixed model
+        this._accumulatedText = '';  // Store accumulated partial transcription
         this._debounceMs = 500; // Prevent multiple calls within 500ms
     }
 
@@ -251,14 +264,22 @@ export default class VoicifyExtension extends Extension {
         }
         this._lastShortcutTime = currentTime;
 
-        console.log('🔥 SHORTCUT PRESSED! Current state:', this._state);
+        console.log('🔥 SHORTCUT PRESSED! Current state:', this._state, 'realtime mode:', this._isRealtimeMode);
 
         switch (this._state) {
             case State.IDLE:
-                this._startRecording();
+                if (this._isRealtimeMode) {
+                    this._startRealtimeRecording();
+                } else {
+                    this._startRecording();
+                }
                 break;
             case State.RECORDING:
-                this._stopRecording();
+                if (this._isRealtimeMode) {
+                    this._stopRealtimeRecording();
+                } else {
+                    this._stopRecording();
+                }
                 break;
             case State.UPLOADING:
             case State.FINISHED:
@@ -313,6 +334,34 @@ export default class VoicifyExtension extends Extension {
             });
     }
 
+    _startRealtimeRecording() {
+        console.log('🔥 _startRealtimeRecording() called - calling D-Bus StartRealtimeRecording');
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        // Update focused window before starting recording
+        this._updateFocusedWindowInDaemon();
+
+        // Reset accumulated text
+        this._accumulatedText = '';
+
+        // Call D-Bus method to start realtime recording
+        this._dbusProxy.StartRealtimeRecordingAsync()
+            .then(() => {
+                console.debug('D-Bus: StartRealtimeRecording method called successfully');
+                // State will be updated via RecordingStarted signal
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to call StartRealtimeRecording:', error);
+                // Reset state on error
+                this._state = State.IDLE;
+                this._updateIndicator();
+            });
+    }
+
     _stopRecording() {
         console.log('🔥 _stopRecording() called - calling D-Bus ToggleRecording');
 
@@ -337,6 +386,33 @@ export default class VoicifyExtension extends Extension {
             })
             .catch(error => {
                 console.error('D-Bus: Failed to call ToggleRecording:', error);
+                // Reset state on error
+                this._state = State.IDLE;
+                this._updateIndicator();
+                this._hideWaveWidget();
+            });
+    }
+
+    _stopRealtimeRecording() {
+        console.log('🔥 _stopRealtimeRecording() called - calling D-Bus CancelRecording');
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        // For realtime recording, we don't have a separate "stop" - we cancel it
+        // since transcription happens in real-time, not after recording ends
+        this._dbusProxy.CancelRecordingAsync()
+            .then(() => {
+                console.debug('D-Bus: CancelRecording method called successfully');
+                // Realtime: immediately return to idle and hide widget
+                this._state = State.IDLE;
+                this._updateIndicator();
+                this._hideWaveWidget();
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to call CancelRecording:', error);
                 // Reset state on error
                 this._state = State.IDLE;
                 this._updateIndicator();
@@ -376,30 +452,49 @@ export default class VoicifyExtension extends Extension {
     }
 
     _onTranscriptionReady(text) {
+        console.debug('Transcription ready (daemon final):', text);
+        if (this._isRealtimeMode) {
+            // In realtime mode, we don't change UI; we already hid on cancel
+            return;
+        }
+        // Non-realtime fallback (unchanged)
         this._state = State.FINISHED;
         this._updateIndicator();
         this._startFinishedAnimation();
-        console.debug('Transcription ready:', text);
+    }
 
-        // Don't auto-paste - daemon plugins handle text injection
-        // Just copy to clipboard for manual paste if needed
-        // St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
-        // console.debug('Text copied to clipboard for manual paste:', text);
+    _onCompleteTranscription(text) {
+        console.debug('Complete transcription received:', text);
+
+        // Paste only on complete chunks in realtime mode
+        if (this._isRealtimeMode && text && text.length > 0) {
+            this._injectTextDelta(text + ' ');
+        }
+    }
+
+    _injectTextDelta(text) {
+        console.debug('Injecting text delta:', text);
+
+        // Copy to clipboard and trigger paste
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+
+        // Use a small delay to ensure clipboard is set before paste
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._performAutoPaste();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _onRecordingCancelled() {
-        this._state = State.CANCELED;
+        // Realtime: simply return to idle and hide the widget, no animation
+        this._state = State.IDLE;
         this._updateIndicator();
-        this._startCanceledAnimation();
+        this._hideWaveWidget();
         console.debug('Recording cancelled');
     }
 
     _performAutoPaste() {
         try {
-            // Try virtual keyboard paste (works on X11)
-            const seat = Clutter.get_default_backend().get_default_seat();
-            const virtualKeyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
-
             const eventTime = global.get_current_time();
 
             // Send Ctrl+V
@@ -494,8 +589,8 @@ export default class VoicifyExtension extends Extension {
 
         this._waveWidget.add_child(waveContainer);
 
-        // Add to main UI group (overlay)
-        Main.uiGroup.add_child(this._waveWidget);
+        // Add as chrome (ensures visibility over UI)
+        Main.layoutManager.addChrome(this._waveWidget);
 
         // Position at bottom left of center
         const monitor = Main.layoutManager.primaryMonitor;
@@ -719,6 +814,16 @@ export default class VoicifyExtension extends Extension {
         this._dbusProxy.connectSignal('TranscriptionReady', (proxy, sender, [text]) => {
             console.debug('D-Bus: Transcription ready signal received:', text);
             this._onTranscriptionReady(text);
+        });
+
+        this._dbusProxy.connectSignal('PartialTranscription', (proxy, sender, [text]) => {
+            console.debug('D-Bus: Partial transcription signal received:', text);
+            this._onPartialTranscription(text);
+        });
+
+        this._dbusProxy.connectSignal('CompleteTranscription', (proxy, sender, [text]) => {
+            console.debug('D-Bus: Complete transcription signal received:', text);
+            this._onCompleteTranscription(text);
         });
 
         this._dbusProxy.connectSignal('RecordingError', (proxy, sender, [error]) => {

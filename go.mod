@@ -9,6 +9,7 @@ require (
 	github.com/gen2brain/malgo v0.11.23
 	github.com/go-vgo/robotgo v0.110.5
 	github.com/godbus/dbus/v5 v5.1.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
 	github.com/sashabaranov/go-openai v1.35.7
 	github.com/u2takey/ffmpeg-go v0.5.0
