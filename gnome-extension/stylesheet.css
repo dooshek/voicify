@@ -18,11 +18,11 @@
 
 /* Wave overlay widget */
 .voicify-wave-overlay {
-    background-color: rgba(0, 0, 0, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    padding: 5px 13px;
-    box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.5);
+    background-color: rgba(0, 0, 0, 0.875);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 30px;
+    box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.7);
+    overflow: hidden;
 }
 
 .voicify-wave-overlay.uploading {
@@ -38,16 +38,14 @@
 }
 
 .voicify-wave-container {
-    padding: 11px 0px 0px 11px;
     margin: 0px 0px 0px 0px;
+    overflow: hidden;
 }
 
 /* Equalizer bars - JavaScript animates them */
 .voicify-wave-bar {
     background-color: #ffffff;
-    border-radius: 1px;
-    margin: 0 2px;
-    width: 6px;
-    height: 15px;
     transform-origin: bottom;
+    border-radius: 2px;
+    border: 1px solid #ffffff;
 }

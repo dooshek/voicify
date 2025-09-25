@@ -12,12 +12,36 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
 // Visualization update interval (ms) for level bars shifting
-const LEVEL_UPDATE_INTERVAL_MS = 60;
+const LEVEL_UPDATE_INTERVAL_MS = 40; // Should be synchronized with @recorder.go throttle
 
 const SHORTCUT_KEY = '<Ctrl><Super>v';
 const CANCEL_SHORTCUT_KEY = '<Ctrl><Super>x';
 
-// Recording states
+// Controlls visualization size
+const BAR_WIDTH = 3;
+const BAR_SPACING = 2;
+const NUM_BARS = 20;
+const CONTAINER_HEIGHT = 30;
+const MAX_SCALE = 1.0;
+const MIN_SCALE = 0;
+
+const OVERLAY_PADDING_BOTTOM = 3;
+const OVERLAY_PADDING_TOP = 0;
+const OVERLAY_PADDING_RIGHT = 3;
+const OVERLAY_PADDING_LEFT = 0;
+const OVERLAY_BORDER = 2;
+
+const CONTAINER_PADDING_TOP = 8;
+const CONTAINER_PADDING_RIGHT = 0;
+const CONTAINER_PADDING_BOTTOM = 0;
+const CONTAINER_PADDING_LEFT = 7;
+
+// Calculated automatically
+const CONTAINER_WIDTH = 130;
+const BAR_HEIGHT = (CONTAINER_HEIGHT / 2) + 1;
+
+// Recording statesSprawdzam teraz jak to działa, trochę się rwie.
+
 const State = {
     IDLE: 'idle',
     RECORDING: 'recording',
@@ -435,7 +459,8 @@ export default class VoicifyExtension extends Extension {
         // Create wave overlay widget
         this._waveWidget = new St.Widget({
             style_class: 'voicify-wave-overlay',
-            reactive: false,
+            style: 'padding: ' + OVERLAY_PADDING_TOP + 'px ' + OVERLAY_PADDING_RIGHT + 'px ' + OVERLAY_PADDING_BOTTOM + 'px ' + OVERLAY_PADDING_LEFT + 'px; border-width: ' + OVERLAY_BORDER + 'px;',
+            reactive: true,
             can_focus: false,
             track_hover: false,
             visible: true,
@@ -444,26 +469,28 @@ export default class VoicifyExtension extends Extension {
         // Create wave container
         const waveContainer = new St.BoxLayout({
             style_class: 'voicify-wave-container',
+            style: 'padding:' + CONTAINER_PADDING_TOP + 'px ' + CONTAINER_PADDING_RIGHT + 'px ' + CONTAINER_PADDING_BOTTOM + 'px ' + CONTAINER_PADDING_LEFT + 'px;',
             vertical: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
+            clip_to_allocation: true,
         });
 
         // Create equalizer bars
         this._waveBars = [];
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < NUM_BARS - 1; i++) {
             const bar = new St.Widget({
                 style_class: `voicify-wave-bar`,
-                width: 4,
-                height: 15,
+                style: `width: ${BAR_WIDTH}px; margin-right: ${BAR_SPACING}px; height: ${BAR_HEIGHT}px;`,
                 visible: true,
+                clip_to_allocation: true,
             });
             this._waveBars.push(bar);
             waveContainer.add_child(bar);
             console.log(`🔥 Created bar ${i} with height: ${bar.height}`);
         }
 
-        waveContainer.set_size(75, 30);
+        waveContainer.set_size(CONTAINER_WIDTH, CONTAINER_HEIGHT);
 
         this._waveWidget.add_child(waveContainer);
 
@@ -473,8 +500,8 @@ export default class VoicifyExtension extends Extension {
         // Position at bottom left of center
         const monitor = Main.layoutManager.primaryMonitor;
         this._waveWidget.set_position(
-            monitor.x + monitor.width / 2, // Move left
-            monitor.y + monitor.height * 0.98 - 20  // More to bottom
+            monitor.x + (monitor.width - CONTAINER_WIDTH) / 2,
+            monitor.y + monitor.height * 0.98 - 20
         );
 
         console.debug(`Wave widget positioned at: ${monitor.x + monitor.width / 2 - 60}, ${monitor.y + monitor.height * 0.98 - 12}`);
@@ -542,7 +569,7 @@ export default class VoicifyExtension extends Extension {
 
         // Set all bars to 100% immediately
         this._waveBars.forEach(bar => {
-            bar.scale_y = 1.2; // Start at max scale
+            bar.scale_y = MAX_SCALE; // Start at max scale
         });
 
         // Short pause then animate down to 0
@@ -553,7 +580,7 @@ export default class VoicifyExtension extends Extension {
             this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
                 // Animate all bars down to 0 simultaneously
                 const progress = phase / 25;
-                const scale = 1.2 * (1 - progress); // Shrink from max to 0
+                const scale = MAX_SCALE * (1 - progress); // Shrink from max to 0
 
                 this._waveBars.forEach(bar => {
                     bar.scale_y = Math.max(0.05, scale);
@@ -598,21 +625,21 @@ export default class VoicifyExtension extends Extension {
 
         // Set all bars to 100% immediately
         this._waveBars.forEach(bar => {
-            bar.scale_y = 1.2; // Start at max scale
+            bar.scale_y = MAX_SCALE; // Start at max scale
         });
 
         // Short pause then animate down to 0
-        this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+        this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ANIMATION_DURATION, () => {
             this._finishedTimer = null;
 
             let phase = 0;
             this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
                 // Animate all bars down to 0 simultaneously
                 const progress = phase / 25;
-                const scale = 1.2 * (1 - progress); // Shrink from max to 0
+                const scale = MAX_SCALE * (1 - progress); // Shrink from max to 0
 
                 this._waveBars.forEach(bar => {
-                    bar.scale_y = Math.max(0.05, scale);
+                    bar.scale_y = Math.max(MIN_SCALE, scale);
                 });
 
                 phase++;
@@ -632,11 +659,6 @@ export default class VoicifyExtension extends Extension {
 
             return GLib.SOURCE_REMOVE;
         });
-    }
-
-    _startWaveAnimation() {
-        // replaced by level-driven wave
-        return;
     }
 
     _startUploadAnimation() {
@@ -668,7 +690,7 @@ export default class VoicifyExtension extends Extension {
                 const amplitude = 0.4 + Math.sin(phase) * 0.3; // Wave amplitude
                 const scale = 0.3 + Math.abs(amplitude);
 
-                bar.scale_y = Math.max(0.2, Math.min(1.2, scale));
+                bar.scale_y = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
             });
 
             waveOffset += waveSpeed;
@@ -735,14 +757,19 @@ export default class VoicifyExtension extends Extension {
         this._levels = [];
         for (let i = 0; i < this._waveBars.length; i++) this._levels.push(0);
         this._waveBars.forEach(bar => {
-            bar.set_pivot_point(0.5, 1.0);
-            bar.scale_y = 0.2;
+            bar.set_pivot_point(0.0, 1.0);
+            bar.scale_y = MIN_SCALE;
         });
     }
 
     _pushLevel(level) {
         if (!this._waveBars) return;
-        this._levels.push(Math.max(0.05, Math.min(1.2, level)));
+        // EMA smoothing to reduce jitter
+        const raw = Math.max(MIN_SCALE, Math.min(MAX_SCALE, level));
+        const alpha = 0.25; // smoothing factor (higher = more responsive)
+        const last = this._levels.length > 0 ? this._levels[this._levels.length - 1] : raw;
+        const smoothed = alpha * raw + (1 - alpha) * last;
+        this._levels.push(smoothed);
         if (this._levels.length > this._waveBars.length) {
             this._levels.shift();
         }
@@ -762,7 +789,7 @@ export default class VoicifyExtension extends Extension {
             for (let i = 0; i < n; i++) {
                 const levelIdx = this._levels.length - 1 - i;
                 const val = levelIdx >= 0 ? this._levels[levelIdx] : 0.05;
-                this._waveBars[n - 1 - i].scale_y = Math.max(0.05, Math.min(1.2, val));
+                this._waveBars[n - 1 - i].scale_y = Math.max(MIN_SCALE, Math.min(MAX_SCALE, val));
             }
             return GLib.SOURCE_CONTINUE;
         });

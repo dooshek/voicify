@@ -42,8 +42,11 @@ rsync -av --delete \
 echo "📁 Extension files synchronized:"
 ls -la "$GNOME_EXT_DIR/"
 
-echo -e "\n🔄 Reloading extension... Press ALT+F2 and type r"
+echo -e "\n🔄 Reloading extension..."
 echo "Waiting 10 seconds for extension to reload..."
+gnome-extensions disable voicify@dooshek.com 2>/dev/null || true
+sleep 3
+gnome-extensions enable voicify@dooshek.com
 
 echo "================================================"
 echo "🎙️ Now start recording and test the flow!"

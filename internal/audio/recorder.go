@@ -20,33 +20,34 @@ import (
 )
 
 const (
-	sampleRate = 16000
-	channels   = 1
-	bufferSize = 1024
-)
+	sampleRate         = 16000
+	channels           = 1
+	throttleIntervalMs = 40 // Should be synchronized with @extension.js LEVEL_UPDATE_INTERVAL_MS to get best visual effect
 
-// --- Automatic Gain Control (AGC) configuration ---
-// agcAttackMs: Envelope attack time (ms). Mniejsze = szybciej reaguje na wzrosty (bardziej "żywe").
-// agcReleaseMs: Envelope release time (ms). Większe = wolniejszy opad (stabilniejsza kreska).
-// agcTarget: Docelowy poziom envelope po wzmocnieniu (skala 0..~1 przed logarytmicznym mapowaniem).
-// agcMaxGain: Maksymalne wzmocnienie (x). Podnosi szept, ale za duże może klipować wizualizację.
-// agcMinGain: Minimalne wzmocnienie (x). Zapobiega zbyt niskiemu poziomowi przy głośnym sygnale.
-// agcGainAttack: Szybkość narastania GAIN (0..1). Większe = szybciej podbija ciche fragmenty.
-// agcGainRelease: Szybkość opadania GAIN (0..1). Większe = szybciej zmniejsza gain po głośnym sygnale.
-// agcNoiseGate: Próg bramki szumów dla WYJŚCIA (nie zeruje envelope). Poniżej progu nie rysujemy kreski.
-// agcVisualBoost: Dodatkowy mnożnik na wyjściu (tylko do wizualizacji, nie wpływa na gain).
-// uiMaxLevel: Maksymalny poziom dla UI (docinamy do tej wartości po skali logarytmicznej).
-const (
-	agcAttackMs    = 20.0  // ms
-	agcReleaseMs   = 350.0 // ms
-	agcTarget      = 1.2
-	agcMaxGain     = 6.0
-	agcMinGain     = 0.1
-	agcGainAttack  = 0.03
-	agcGainRelease = 0.03
-	agcNoiseGate   = 0.002
-	agcVisualBoost = 1.5
-	uiMaxLevel     = 1.0
+	// --- Automatic Gain Control (AGC) configuration ---
+	// agcAttackMs: Envelope attack time (ms). Mniejsze = szybciej reaguje na wzrosty (bardziej "żywe").
+	// agcReleaseMs: Envelope release time (ms). Większe = wolniejszy opad (stabilniejsza kreska).
+	// agcTarget: Docelowy poziom envelope po wzmocnieniu (skala 0..~1 przed logarytmicznym mapowaniem).
+	// agcMaxGain: Maksymalne wzmocnienie (x). Podnosi szept, ale za duże może klipować wizualizację.
+	// agcMinGain: Minimalne wzmocnienie (x). Zapobiega zbyt niskiemu poziomowi przy głośnym sygnale.
+	// agcGainAttack: Szybkość narastania GAIN (0..1). Większe = szybciej podbija ciche fragmenty.
+	// agcGainRelease: Szybkość opadania GAIN (0..1). Większe = szybciej zmniejsza gain po głośnym sygnale.
+	// agcNoiseGate: Próg bramki szumów dla WYJŚCIA (nie zeruje envelope). Poniżej progu nie rysujemy kreski.
+	// agcVisualBoost: Dodatkowy mnożnik na wyjściu (tylko do wizualizacji, nie wpływa na gain).
+	// uiMaxLevel: Maksymalny poziom dla UI (docinamy do tej wartości po skali logarytmicznej).
+	agcAttackMs  = 10.0  // ms
+	agcReleaseMs = 550.0 // ms
+	// agcEnvelopeSizeMs: Jeśli > 0, użyj tej samej wartości (ms) dla attack i release
+	// przy obliczaniu obwiedni. 0 oznacza wyłączone (używane są osobne agcAttackMs/agcReleaseMs).
+	agcEnvelopeSizeMs = 0.0
+	agcTarget         = 1.0
+	agcMaxGain        = 7.5
+	agcMinGain        = 0.1
+	agcGainAttack     = 0.1
+	agcGainRelease    = 0.02
+	agcNoiseGate      = 0.02
+	agcVisualBoost    = 2.0
+	uiMaxLevel        = 1.0
 )
 
 var ErrFFmpegNotInstalled = fmt.Errorf("FFmpeg is not installed. Please install FFmpeg to use voice recording functionality")
@@ -357,8 +358,14 @@ func (r *Recorder) processInputLevel(inputBuffer []byte) {
 
 	// Peak envelope follower with attack/release
 	// Typical values: attack ~5-10 ms, release ~80-200 ms at 16kHz
-	attackCoeff := math.Exp(-1.0 / ((agcAttackMs / 1000.0) * float64(sampleRate)))
-	releaseCoeff := math.Exp(-1.0 / ((agcReleaseMs / 1000.0) * float64(sampleRate)))
+	attackMs := agcAttackMs
+	releaseMs := agcReleaseMs
+	if agcEnvelopeSizeMs > 0 {
+		attackMs = agcEnvelopeSizeMs
+		releaseMs = agcEnvelopeSizeMs
+	}
+	attackCoeff := math.Exp(-1.0 / ((attackMs / 1000.0) * float64(sampleRate)))
+	releaseCoeff := math.Exp(-1.0 / ((releaseMs / 1000.0) * float64(sampleRate)))
 
 	// Convert max sample to normalized peak [0..1]
 	peak := maxSample / 32768.0
@@ -414,9 +421,9 @@ func (r *Recorder) processInputLevel(inputBuffer []byte) {
 		}
 	}
 
-	// Throttle emits to ~30ms
+	// Throttle emits
 	now := time.Now()
-	if now.Sub(r.lastLevelEmit) < 25*time.Millisecond {
+	if now.Sub(r.lastLevelEmit) < throttleIntervalMs*time.Millisecond {
 		return
 	}
 	r.lastLevelEmit = now
@@ -429,31 +436,10 @@ func (r *Recorder) processInputLevel(inputBuffer []byte) {
 	}
 }
 
-// sqrt is a tiny helper to avoid importing math for one function
-func sqrt(x float64) float64 {
-	// Fast enough Newton-Raphson for small inputs
-	if x <= 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 6; i++ {
-		z = 0.5 * (z + x/z)
-	}
-	return z
-}
-
 // abs returns absolute value of int32
 func abs(x int32) int32 {
 	if x < 0 {
 		return -x
 	}
 	return x
-}
-
-// log10 computes log base 10
-func log10(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	return math.Log10(x)
 }
