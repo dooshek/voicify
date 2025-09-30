@@ -59,8 +59,6 @@ Use conventional commits format with these specifications:
 - Keep descriptions concise yet informative
 - Focus on the essential change and its business value
 - Use bullet points for multiple related changes
-- **Always append Linear ticket reference when provided:** If a Linear ticket ID/number was mentioned during the session, automatically append it to the commit message in format: `[TICKET-ID]`
-- If no Linear ticket was explicitly mentioned, check context for potential ticket references
 </analysis_and_structuring>
 
 <command_execution>
@@ -80,20 +78,6 @@ Use conventional commits format with these specifications:
 3. If user confirms: Execute using `git add` (without -p flag) followed by `git commit`
 4. If user declines: Allow manual execution of the prepared commands
 
-### Post-Commit Integration
-
-After successful commit completion:
-
-1. **Linear ticket creation:** Offer to create a new Linear ticket with:
-- Team ID: "c3298f78-4c74-40ef-a080-e23a5c742f9b" (PilotGo team)
-- State ID: "4fd1ce2b-08f6-402c-ab0a-0fa1e0854321" (In Review status)
-- Project ID: "fb5e5947-8f56-4280-b67c-e05c113520b4" (PilotGo Product project)
-- Concise description of implemented changes and their business rationale
-
-2. **Ticket reference handling:**
-- **Automatically detect and include Linear ticket IDs:** Scan session conversation for any Linear ticket references (PIL-XXX, ticket IDs, issue numbers) and automatically append them to commit message in `[TICKET-ID]` format
-- If no ticket mentioned, check for related existing tickets and suggest references  
-- Offer ticket creation or status updates as appropriate
 </command_execution>
 
 <quality_assurance>
