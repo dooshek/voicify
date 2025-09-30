@@ -63,7 +63,7 @@ type ToolCall struct {
 }
 
 
-// NewLinearMCPClient creates a new Linear MCP client
+// NewLinearMCPClient creates a new Linear MCP client with retry mechanism
 func NewLinearMCPClient() (*LinearMCPClient, error) {
 	// Setup PID file path
 	homeDir, err := os.UserHomeDir()
@@ -92,12 +92,42 @@ func NewLinearMCPClient() (*LinearMCPClient, error) {
 		client.cleanupOldProcess()
 	}
 
-	// Start new process
-	if err := client.startProcess(); err != nil {
-		return nil, fmt.Errorf("failed to start mcp-remote: %w", err)
+	// Try to start process with retry mechanism
+	const maxAttempts = 3
+	backoffDuration := 2 * time.Second
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		logger.Debugf("MCP initialization attempt %d/%d", attempt, maxAttempts)
+
+		// Start new process with timeout
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- client.startProcess()
+		}()
+
+		select {
+		case err := <-errChan:
+			if err == nil {
+				logger.Infof("✅ Linear MCP client initialized successfully on attempt %d/%d", attempt, maxAttempts)
+				return client, nil
+			}
+			logger.Warnf("MCP initialization attempt %d/%d failed: %v", attempt, maxAttempts, err)
+		case <-time.After(10 * time.Second):
+			logger.Warnf("MCP initialization attempt %d/%d timed out after 10s", attempt, maxAttempts)
+			client.cleanupOldProcess()
+		}
+
+		// Wait before next attempt (exponential backoff)
+		if attempt < maxAttempts {
+			logger.Debugf("Waiting %v before retry...", backoffDuration)
+			time.Sleep(backoffDuration)
+			backoffDuration *= 2 // exponential backoff
+		}
 	}
 
-	return client, nil
+	logger.Error("❌ Failed to initialize Linear MCP client after 3 attempts with exponential backoff", fmt.Errorf("max attempts reached"))
+	logger.Info("⚠️  Linear plugin will not be available. You can try restarting voicify later.")
+	return nil, fmt.Errorf("failed to initialize MCP client after %d attempts", maxAttempts)
 }
 
 // SetupLinearMCP is no longer needed - npx mcp-remote handles authorization
@@ -187,7 +217,6 @@ func (c *LinearMCPClient) startProcess() error {
 
 	// Wait for process to initialize
 	logger.Debug("Waiting for mcp-remote to initialize...")
-	time.Sleep(5 * time.Second)
 
 	return nil
 }

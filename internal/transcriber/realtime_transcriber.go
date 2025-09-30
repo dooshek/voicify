@@ -238,7 +238,7 @@ func (rt *RealtimeTranscriber) configureSession() error {
 		Session: SessionConfig{
 			InputAudioFormat: "pcm16",
 			InputAudioTranscription: TranscriptionConfig{
-				Model:    "gpt-4o-mini-transcribe",
+				Model:    "gpt-4o-transcribe",
 				Language: "pl",
 			},
 			TurnDetection: &TurnDetectionConfig{

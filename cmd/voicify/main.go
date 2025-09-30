@@ -159,14 +159,16 @@ func main() {
 		logger.Debugf("TTS disabled: No OpenAI API key configured")
 	}
 
-	// Pre-initialize Linear MCP client to avoid delays during usage
-	logger.Debug("Pre-initializing Linear MCP client...")
-	if err := initializeGlobalLinearMCP(); err != nil {
-		logger.Warnf("Failed to pre-initialize Linear MCP client: %v", err)
-		logger.Info("Linear MCP will be initialized on first use")
-	} else {
-		logger.Debug("Linear MCP client pre-initialized successfully")
-	}
+	// Pre-initialize Linear MCP client asynchronously to avoid blocking startup
+	go func() {
+		logger.Debug("Pre-initializing Linear MCP client...")
+		if err := initializeGlobalLinearMCP(); err != nil {
+			logger.Warnf("Failed to pre-initialize Linear MCP client: %v", err)
+			logger.Info("Linear MCP will be initialized on first use")
+		} else {
+			logger.Debug("Linear MCP client pre-initialized successfully")
+		}
+	}()
 
 	var startMessage string
 	var monitor keyboard.KeyboardMonitor
@@ -217,17 +219,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Send system notification
-	notifier := notification.New()
-	if err := notifier.Notify("🎙️ Voicify started", startMessage); err != nil {
-		logger.Warn("Could not send notification")
-	}
-
 	// Print to console
 	if *daemonMode {
 		logger.Infof("🔌 D-Bus daemon started: %s", startMessage)
 		logger.Info("💡 GNOME extension can now communicate with voicify")
 	} else {
+		// Send system notification
+		notifier := notification.New()
+		if err := notifier.Notify("🎙️ Voicify started", startMessage); err != nil {
+			logger.Warn("Could not send notification")
+		}
 		logger.Infof("Press %s to start/stop recording", startMessage)
 		logger.Info("💡 Note: You can run `voicify --wizard` to change the key combination")
 	}

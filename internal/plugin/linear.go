@@ -24,18 +24,7 @@ type LinearAction struct {
 // Initialize initializes the Linear plugin
 func (p *LinearPlugin) Initialize() error {
 	logger.Debug("Linear plugin initialized")
-
-	// Initialize agentic loop - no setup required for npx mcp-remote
-	agenticLoop, err := linear.NewAgenticLoop()
-	if err != nil {
-		logger.Errorf("Failed to initialize agentic loop: %v", err)
-		return err
-	}
-
-	p.mu.Lock()
-	p.agenticLoop = agenticLoop
-	p.mu.Unlock()
-
+	// AgenticLoop will be created lazily on first use to avoid blocking during MCP initialization
 	return nil
 }
 
@@ -74,15 +63,23 @@ func (a *LinearAction) Execute(transcription string) error {
 	logger.Debugf("Linear plugin: Executing action for transcription: %s", transcription)
 	logger.Info("🔧 Linear plugin: Akcja została uruchomiona - plugin Linear jest aktywny")
 
-	// Check if agentic loop is already running
-	a.plugin.mu.RLock()
+	// Get or create agentic loop (lazy initialization)
+	a.plugin.mu.Lock()
 	agenticLoop := a.plugin.agenticLoop
-	a.plugin.mu.RUnlock()
-
 	if agenticLoop == nil {
-		logger.Errorf("Agentic loop not initialized", fmt.Errorf("agentic loop is nil"))
-		return fmt.Errorf("agentic loop not initialized")
+		logger.Debug("Creating agentic loop on first use...")
+		var err error
+		agenticLoop, err = linear.NewAgenticLoop()
+		if err != nil {
+			a.plugin.mu.Unlock()
+			logger.Errorf("Failed to initialize agentic loop: %v", err)
+			logger.Info("⚠️  Linear MCP client may not be initialized yet. Try again in a moment.")
+			return fmt.Errorf("failed to initialize agentic loop: %w", err)
+		}
+		a.plugin.agenticLoop = agenticLoop
+		logger.Debug("Agentic loop created successfully")
 	}
+	a.plugin.mu.Unlock()
 
 	// Check current state
 	currentState := agenticLoop.GetState()
