@@ -23,14 +23,15 @@ const (
 
 // Server implements D-Bus service for voicify recording
 type Server struct {
-	conn                  *dbus.Conn
-	recorder              *audio.Recorder
-	realtimeRecorder      *audio.RealtimeRecorder
-	isRealtimeMode        bool
-	postTranscriptionMode bool
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	mu                    sync.Mutex
+	conn                        *dbus.Conn
+	recorder                    *audio.Recorder
+	realtimeRecorder            *audio.RealtimeRecorder
+	isRealtimeMode              bool
+	postTranscriptionRouterMode bool // Post-transcription mode with router
+	postTranscriptionAutoPaste  bool // Post-transcription mode with auto-paste
+	ctx                         context.Context
+	cancel                      context.CancelFunc
+	mu                          sync.Mutex
 	// level forwarding
 	levelForwardCancel context.CancelFunc
 	// realtime transcription forwarding
@@ -100,9 +101,6 @@ func (s *Server) Start() error {
 			Name: dbusInterface,
 			Methods: []introspect.Method{
 				{
-					Name: "ToggleRecording",
-				},
-				{
 					Name: "StartRealtimeRecording",
 				},
 				{
@@ -115,10 +113,10 @@ func (s *Server) Start() error {
 					Name: "CancelRecording",
 				},
 				{
-					Name: "StartPostTranscriptionRecording",
+					Name: "TogglePostTranscriptionAutoPaste",
 				},
 				{
-					Name: "StopPostTranscriptionRecording",
+					Name: "TogglePostTranscriptionRouter",
 				},
 				{
 					Name: "UpdateFocusedWindow",
@@ -197,31 +195,53 @@ func (s *Server) Wait() {
 	<-s.ctx.Done()
 }
 
-// ToggleRecording toggles the recording state (D-Bus method)
-func (s *Server) ToggleRecording() *dbus.Error {
+// TogglePostTranscriptionAutoPaste toggles post-transcription recording with auto-paste (D-Bus method)
+func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	logger.Debugf("D-Bus: ToggleRecording called")
+	logger.Debugf("D-Bus: TogglePostTranscriptionAutoPaste called")
 
-	// Always use regular recording for toggle mode
-	s.isRealtimeMode = false
-
-	if !s.recorder.IsRecording() {
-		// Start recording
-		logger.Debugf("D-Bus: Starting regular recording")
-		s.recorder.Start()
-
-		// Emit signal
-		s.emitSignal("RecordingStarted")
-
-		// Start forwarding input levels
-		s.startForwardingLevels()
-
+	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
+		// Already recording - stop it
+		logger.Debugf("D-Bus: Stopping post-transcription auto-paste recording")
+		go s.stopPostTranscriptionAutoPasteAsync()
 	} else {
-		logger.Debugf("D-Bus: Recording already in progress, stopping")
-		// Process transcription in background to avoid blocking D-Bus call
-		go s.stopRecordingAsync()
+		// Start recording in auto-paste mode
+		logger.Debugf("D-Bus: Starting post-transcription auto-paste recording")
+		s.postTranscriptionAutoPaste = true
+		s.postTranscriptionRouterMode = false
+		s.isRealtimeMode = false
+
+		s.recorder.Start()
+		s.emitSignal("RecordingStarted")
+		s.startForwardingLevels()
+	}
+
+	return nil
+}
+
+// TogglePostTranscriptionRouter toggles post-transcription recording with router (D-Bus method)
+func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debugf("D-Bus: TogglePostTranscriptionRouter called")
+
+	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
+		// Already recording - stop it
+		logger.Debugf("D-Bus: Stopping post-transcription router recording")
+		go s.stopPostTranscriptionRouterAsync()
+	} else {
+		// Start recording in router mode
+		logger.Debugf("D-Bus: Starting post-transcription router recording")
+		s.postTranscriptionRouterMode = true
+		s.postTranscriptionAutoPaste = false
+		s.isRealtimeMode = false
+
+		s.recorder.Start()
+		s.emitSignal("RecordingStarted")
+		s.startForwardingLevels()
 	}
 
 	return nil
@@ -315,52 +335,6 @@ func (s *Server) CancelRecording() *dbus.Error {
 	return nil
 }
 
-// StartPostTranscriptionRecording starts post-transcription recording mode (D-Bus method)
-func (s *Server) StartPostTranscriptionRecording() *dbus.Error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	logger.Debugf("D-Bus: StartPostTranscriptionRecording called")
-
-	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
-		return dbus.MakeFailedError(fmt.Errorf("recording already in progress"))
-	}
-
-	// Set post-transcription mode flags
-	s.postTranscriptionMode = true
-	s.isRealtimeMode = false
-
-	// Start regular recording
-	logger.Debugf("D-Bus: Starting post-transcription recording")
-	s.recorder.Start()
-
-	// Emit signal
-	s.emitSignal("RecordingStarted")
-
-	// Start forwarding input levels
-	s.startForwardingLevels()
-
-	return nil
-}
-
-// StopPostTranscriptionRecording stops post-transcription recording and routes through router (D-Bus method)
-func (s *Server) StopPostTranscriptionRecording() *dbus.Error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	logger.Debugf("D-Bus: StopPostTranscriptionRecording called")
-
-	if !s.recorder.IsRecording() {
-		logger.Debugf("D-Bus: No recording in progress")
-		return nil
-	}
-
-	// Process in background
-	go s.stopPostTranscriptionAsync()
-
-	return nil
-}
-
 // UpdateFocusedWindow updates the cached focused window info (D-Bus method)
 func (s *Server) UpdateFocusedWindow(title string, app string) *dbus.Error {
 	logger.Debugf("D-Bus: UpdateFocusedWindow called - title: %s, app: %s", title, app)
@@ -370,67 +344,57 @@ func (s *Server) UpdateFocusedWindow(title string, app string) *dbus.Error {
 	return nil
 }
 
-// stopRecordingAsync stops recording and handles transcription in background
-func (s *Server) stopRecordingAsync() {
+// stopPostTranscriptionAutoPasteAsync stops recording in auto-paste mode
+func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 	go func() {
-		logger.Debugf("D-Bus: Stopping recording and processing transcription")
+		logger.Debugf("D-Bus: Stopping post-transcription auto-paste recording")
 
 		transcription, err := s.recorder.Stop()
 		if err != nil {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())
-			return
-		}
-
-		// Stop forwarding levels after recording stops
-		s.stopForwardingLevels()
-
-		logger.Debugf("D-Bus: Transcription received: %s", transcription)
-
-		// Check if this is post-transcription mode
-		if s.postTranscriptionMode {
-			logger.Debugf("D-Bus: Post-transcription mode - routing through router without clipboard copy")
-			// Route via router - plugins may call RequestPaste
-			router := transcriptionrouter.New(transcription)
-			if err := router.Route(transcription); err != nil {
-				logger.Errorf("D-Bus: Error routing transcription", err)
-				s.emitSignal("RecordingError", fmt.Sprintf("routing error: %v", err))
-			}
-			// Reset post-transcription mode
-			s.postTranscriptionMode = false
-			// Emit signal that transcription is ready (but not pasted)
-			s.emitSignal("TranscriptionReady", transcription)
-		} else {
-			// Regular mode: copy to clipboard for extension
-			// Extension will handle pasting. Keyboard monitor has its own routing.
-			if err := clipboard.CopyToClipboard(transcription); err != nil {
-				logger.Error("D-Bus: Failed to copy to clipboard", err)
-				s.emitSignal("RecordingError", "clipboard error")
-				return
-			}
-			// Emit transcription ready signal
-			s.emitSignal("TranscriptionReady", transcription)
-		}
-	}()
-}
-
-// stopPostTranscriptionAsync stops recording in post-transcription mode and routes through router
-func (s *Server) stopPostTranscriptionAsync() {
-	go func() {
-		logger.Debugf("D-Bus: Stopping post-transcription recording")
-
-		transcription, err := s.recorder.Stop()
-		if err != nil {
-			logger.Errorf("D-Bus: Error stopping recording", err)
-			s.emitSignal("RecordingError", err.Error())
-			s.postTranscriptionMode = false
+			s.postTranscriptionAutoPaste = false
 			return
 		}
 
 		// Stop forwarding levels
 		s.stopForwardingLevels()
 
-		logger.Debugf("D-Bus: Post-transcription received: %s", transcription)
+		logger.Debugf("D-Bus: Post-transcription auto-paste received: %s", transcription)
+
+		// Copy to clipboard and trigger paste via extension
+		if err := clipboard.CopyToClipboard(transcription); err != nil {
+			logger.Error("D-Bus: Failed to copy to clipboard", err)
+			s.emitSignal("RecordingError", "clipboard error")
+			s.postTranscriptionAutoPaste = false
+			return
+		}
+
+		// Reset mode
+		s.postTranscriptionAutoPaste = false
+
+		// Emit signal that transcription is ready for auto-paste
+		s.emitSignal("TranscriptionReady", transcription)
+	}()
+}
+
+// stopPostTranscriptionRouterAsync stops recording in router mode
+func (s *Server) stopPostTranscriptionRouterAsync() {
+	go func() {
+		logger.Debugf("D-Bus: Stopping post-transcription router recording")
+
+		transcription, err := s.recorder.Stop()
+		if err != nil {
+			logger.Errorf("D-Bus: Error stopping recording", err)
+			s.emitSignal("RecordingError", err.Error())
+			s.postTranscriptionRouterMode = false
+			return
+		}
+
+		// Stop forwarding levels
+		s.stopForwardingLevels()
+
+		logger.Debugf("D-Bus: Post-transcription router received: %s", transcription)
 
 		// Route through router - plugins may call RequestPaste
 		router := transcriptionrouter.New(transcription)
@@ -440,7 +404,7 @@ func (s *Server) stopPostTranscriptionAsync() {
 		}
 
 		// Reset mode
-		s.postTranscriptionMode = false
+		s.postTranscriptionRouterMode = false
 
 		// Emit signal that transcription is ready (but not auto-pasted)
 		s.emitSignal("TranscriptionReady", transcription)

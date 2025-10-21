@@ -2,10 +2,11 @@
 
 ## Skróty klawiszowe:
 
-- `CTRL+SUPER+V` - Start/stop realtime recording (natychmiastowa transkrypcja)
-- `CTRL+SUPER+C` - Start post-transcription recording
-- `CTRL+SUPER+D` - Stop post-transcription recording i przekaż do routera
-- `CTRL+SUPER+X` - Cancel bieżącego nagrywania (anuluje bez przetwarzania)
+- `CTRL+SUPER+V` - Toggle realtime recording (natychmiastowa transkrypcja)
+- `CTRL+SUPER+C` - Toggle post-transcription recording z auto-paste
+- `CTRL+SUPER+D` - Toggle post-transcription recording z przekazaniem do routera
+
+Każdy skrót działa jako toggle (start/stop) dla swojego trybu nagrywania.
 
 ## Zaimplementowane komponenty:
 
@@ -13,11 +14,11 @@
 1. ✅ `internal/state/state.go` - dodano DBus server reference
 2. ✅ `internal/dbus/interface.xml` - dodano metody i signal RequestPaste
 3. ✅ `internal/dbus/server.go`:
-   - Pole `postTranscriptionMode bool`
-   - Metoda `StartPostTranscriptionRecording()`
-   - Metoda `StopPostTranscriptionRecording()`
+   - Pola `postTranscriptionRouterMode bool` i `postTranscriptionAutoPaste bool`
+   - Metoda `TogglePostTranscriptionAutoPaste()` - toggle auto-paste mode
+   - Metoda `TogglePostTranscriptionRouter()` - toggle router mode
    - Metoda `EmitRequestPaste(text string)`
-   - Zmodyfikowano `stopRecordingAsync()` aby routowało przez router w post-transcription mode
+   - Funkcje `stopPostTranscriptionAutoPasteAsync()` i `stopPostTranscriptionRouterAsync()`
 4. ✅ `pkg/pluginapi/paste.go` - nowy plik z funkcją `RequestPaste(text string)`
 5. ✅ `internal/plugin/utils.go` - dodano helper `RequestPaste()` z fallbackiem
 6. ✅ `cmd/voicify/main.go` - ustawienie DBus server w global state
@@ -25,25 +26,39 @@
 
 ### Frontend (GNOME Extension)
 1. ✅ `gnome-extension/extension.js`:
-   - Flaga `_isPostTranscriptionMode`
-   - Rozszerzony DBus interface o nowe metody i signal
-   - Zmodyfikowano `_startPostRecordRecording()` - używa nowej metody DBus
-   - Zmodyfikowano `_stopPostRecordRecording()` - używa nowej metody DBus
-   - Zmodyfikowano `_onCancelPressed()` - obsługuje post-transcription mode
-   - Dodano `_onRequestPaste(text)` - handler dla RequestPaste signal
-   - Zmodyfikowano `_onTranscriptionReady()` - nie wkleja w post-transcription mode
-   - Resetowanie flagi w wielu miejscach
-   - Dodano nowy shortcut `CTRL+SUPER+D` do zatrzymania post-transcription recording
+   - Flagi `_isRealtimeMode`, `_isPostAutoPaste`, `_isPostRouter`
+   - Rozszerzony DBus interface o nowe metody toggle
+   - Skróty:
+     - `CTRL+SUPER+V` - toggle realtime recording
+     - `CTRL+SUPER+C` - toggle post-transcription auto-paste
+     - `CTRL+SUPER+D` - toggle post-transcription router
+   - Usunięto `CTRL+SUPER+X` cancel shortcut (niepotrzebny z toggle)
+   - Metody start/stop dla każdego trybu
+   - `_onRequestPaste(text)` - handler dla RequestPaste signal
+   - `_onTranscriptionReady()` - różne zachowanie dla auto-paste vs router mode
 
 ## Post-Transcription Flow:
 
-1. CTRL+SUPER+C → ustawia `_isPostTranscriptionMode = true`, rozpoczyna nagrywanie
+### Auto-Paste Mode (CTRL+SUPER+C):
+1. CTRL+SUPER+C → rozpoczyna nagrywanie w auto-paste mode
 2. Mówisz
-3. CTRL+SUPER+D → wywołuje `StopPostTranscriptionRecording`
+3. CTRL+SUPER+C → zatrzymuje nagrywanie
+4. Backend transkrybuje i kopiuje do clipboard
+5. Extension odbiera signal i automatycznie wkleja tekst
+
+### Router Mode (CTRL+SUPER+D):
+1. CTRL+SUPER+D → rozpoczyna nagrywanie w router mode
+2. Mówisz
+3. CTRL+SUPER+D → zatrzymuje nagrywanie
 4. Backend transkrybuje i przekazuje do routera (BEZ kopiowania do clipboard)
 5. Router wykonuje matching pluginy
 6. Plugin może wywołać `pluginapi.RequestPaste(text)`
 7. Extension odbiera signal i wkleja tekst
+
+### Realtime Mode (CTRL+SUPER+V):
+1. CTRL+SUPER+V → rozpoczyna realtime recording
+2. Mówisz, transcription pojawia się na bieżąco
+3. CTRL+SUPER+V → zatrzymuje recording i routuje przez router
 
 ## Test flow:
 
@@ -58,43 +73,53 @@ cd /home/dooshek/projects/voicify/main
 - Wayland: Logout/login
 - Sprawdź logi: `journalctl --user -u gnome-shell -f`
 
-### Krok 3: Testuj post-transcription mode
-1. Naciśnij `CTRL+SUPER+C` - rozpoczyna post-transcription recording
+### Krok 3: Testuj auto-paste mode
+1. Naciśnij `CTRL+SUPER+C` - rozpoczyna recording
 2. Powiedz coś (np. "test wiadomości")
-3. Naciśnij `CTRL+SUPER+D` - zatrzymuje i routuje przez router
+3. Naciśnij `CTRL+SUPER+C` - zatrzymuje recording
+4. Backend transkrybuje i kopiuje do clipboard
+5. Extension automatycznie wkleja tekst
+
+### Krok 4: Testuj router mode
+1. Naciśnij `CTRL+SUPER+D` - rozpoczyna recording
+2. Powiedz coś (np. "dodaj task test")
+3. Naciśnij `CTRL+SUPER+D` - zatrzymuje recording
 4. Backend:
    - Transkrybuje audio
    - Przekazuje do routera (NIE kopiuje do clipboard)
    - Router wykonuje matching pluginy
    - Plugin może wywołać `pluginapi.RequestPaste(text)`
 5. Extension:
-   - Odbiera signal `RequestPaste` z tekstem
+   - Odbiera signal `RequestPaste` z tekstem (jeśli plugin to wywołał)
    - Kopiuje do clipboard
    - Wykonuje auto-paste
 
-### Krok 4: Weryfikuj logi backend
+### Krok 5: Weryfikuj logi backend
 ```bash
-journalctl --user -u gnome-shell -f | grep -E "(Post-transcription|RequestPaste)"
+journalctl --user -u gnome-shell -f | grep -E "(Post-transcription|RequestPaste|TogglePost)"
 ```
 
-Powinny pokazać:
-- `D-Bus: StartPostTranscriptionRecording called`
-- `D-Bus: StopPostTranscriptionRecording called`
-- `D-Bus: Post-transcription received: ...`
+Powinny pokazać dla auto-paste:
+- `D-Bus: TogglePostTranscriptionAutoPaste called`
+- `D-Bus: Stopping post-transcription auto-paste recording`
+- `D-Bus: Post-transcription auto-paste received: ...`
+
+Powinny pokazać dla router:
+- `D-Bus: TogglePostTranscriptionRouter called`
+- `D-Bus: Stopping post-transcription router recording`
+- `D-Bus: Post-transcription router received: ...`
 - `Router: Starting routing for transcription: ...`
 - `D-Bus: Plugin requesting paste of text: ...`
 
-### Krok 5: Weryfikuj logi extension
+### Krok 6: Weryfikuj logi extension
 ```bash
 journalctl --user -u gnome-shell -f | grep voicify
 ```
 
 Powinny pokazać:
-- `POST-RECORD SHORTCUT PRESSED!`
-- `post-transcription mode: true`
-- `CANCEL PRESSED! ... post-transcription mode: true`
-- `Post-transcription mode - stopping and routing`
-- `RequestPaste signal received from plugin`
+- `POST AUTO-PASTE SHORTCUT PRESSED!` lub `POST ROUTER SHORTCUT PRESSED!`
+- `Post-autopaste mode - performing auto-paste` lub `Post-router mode - waiting for plugin RequestPaste signal`
+- `RequestPaste signal received from plugin` (tylko w router mode)
 
 ## Przykład użycia w pluginie:
 

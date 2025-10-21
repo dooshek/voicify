@@ -14,10 +14,9 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 // Visualization update interval (ms) for level bars shifting
 const LEVEL_UPDATE_INTERVAL_MS = 40; // Should be synchronized with @recorder.go throttle
 
-const SHORTCUT_KEY = '<Ctrl><Super>v';
-const CANCEL_SHORTCUT_KEY = '<Ctrl><Super>x';
-const POST_RECORD_SHORTCUT_KEY = '<Ctrl><Super>c';
-const POST_TRANSCRIPTION_STOP_KEY = '<Ctrl><Super>d';
+const REALTIME_SHORTCUT_KEY = '<Ctrl><Super>v';
+const POST_AUTOPASTE_SHORTCUT_KEY = '<Ctrl><Super>c';
+const POST_ROUTER_SHORTCUT_KEY = '<Ctrl><Super>d';
 
 // Controlls visualization size
 const BAR_WIDTH = 3;
@@ -60,10 +59,9 @@ const State = {
 const VoicifyDBusInterface = `
 <node>
   <interface name="com.dooshek.voicify.Recorder">
-    <method name="ToggleRecording"/>
     <method name="StartRealtimeRecording"/>
-    <method name="StartPostTranscriptionRecording"/>
-    <method name="StopPostTranscriptionRecording"/>
+    <method name="TogglePostTranscriptionAutoPaste"/>
+    <method name="TogglePostTranscriptionRouter"/>
     <method name="GetStatus">
       <arg name="is_recording" type="b" direction="out"/>
     </method>
@@ -102,10 +100,9 @@ export default class VoicifyExtension extends Extension {
         super(metadata);
         this._indicator = null;
         this._icon = null;
-        this._action = null;
-        this._cancelAction = null;
-        this._postRecordAction = null;
-        this._postTranscriptionStopAction = null;
+        this._realtimeAction = null;
+        this._postAutoPasteAction = null;
+        this._postRouterAction = null;
         this._state = State.IDLE;
         this._timeoutId = null;
         this._waveWidget = null;
@@ -117,9 +114,9 @@ export default class VoicifyExtension extends Extension {
         this._levels = [];
         this._levelTimer = null;
         this._lastShortcutTime = 0;
-        this._lastCancelTime = 0;
-        this._isRealtimeMode = true; // Back to real-time mode with fixed model
-        this._isPostTranscriptionMode = false; // Post-transcription mode flag
+        this._isRealtimeMode = false; // Track current recording mode
+        this._isPostAutoPaste = false; // Post-transcription auto-paste mode
+        this._isPostRouter = false; // Post-transcription router mode
         this._accumulatedText = '';  // Store accumulated partial transcription
         this._debounceMs = 500; // Prevent multiple calls within 500ms
     }
@@ -134,10 +131,9 @@ export default class VoicifyExtension extends Extension {
         this._createIndicator();
 
         // Set up global shortcuts
-        this._setupGlobalShortcut();
-        this._setupCancelShortcut();
-        this._setupPostRecordShortcut();
-        this._setupPostTranscriptionStopShortcut();
+        this._setupRealtimeShortcut();
+        this._setupPostAutoPasteShortcut();
+        this._setupPostRouterShortcut();
     }
 
     disable() {
@@ -170,40 +166,31 @@ export default class VoicifyExtension extends Extension {
         }
 
         // Clean up global shortcuts
-        if (this._action !== null) {
-            global.display.ungrab_accelerator(this._action);
+        if (this._realtimeAction !== null) {
+            global.display.ungrab_accelerator(this._realtimeAction);
             Main.wm.allowKeybinding(
-                Meta.external_binding_name_for_action(this._action),
+                Meta.external_binding_name_for_action(this._realtimeAction),
                 Shell.ActionMode.NONE
             );
-            this._action = null;
+            this._realtimeAction = null;
         }
 
-        if (this._cancelAction !== null) {
-            global.display.ungrab_accelerator(this._cancelAction);
+        if (this._postAutoPasteAction !== null) {
+            global.display.ungrab_accelerator(this._postAutoPasteAction);
             Main.wm.allowKeybinding(
-                Meta.external_binding_name_for_action(this._cancelAction),
+                Meta.external_binding_name_for_action(this._postAutoPasteAction),
                 Shell.ActionMode.NONE
             );
-            this._cancelAction = null;
+            this._postAutoPasteAction = null;
         }
 
-        if (this._postRecordAction !== null) {
-            global.display.ungrab_accelerator(this._postRecordAction);
+        if (this._postRouterAction !== null) {
+            global.display.ungrab_accelerator(this._postRouterAction);
             Main.wm.allowKeybinding(
-                Meta.external_binding_name_for_action(this._postRecordAction),
+                Meta.external_binding_name_for_action(this._postRouterAction),
                 Shell.ActionMode.NONE
             );
-            this._postRecordAction = null;
-        }
-
-        if (this._postTranscriptionStopAction !== null) {
-            global.display.ungrab_accelerator(this._postTranscriptionStopAction);
-            Main.wm.allowKeybinding(
-                Meta.external_binding_name_for_action(this._postTranscriptionStopAction),
-                Shell.ActionMode.NONE
-            );
-            this._postTranscriptionStopAction = null;
+            this._postRouterAction = null;
         }
 
         // Clean up wave widget
@@ -236,393 +223,286 @@ export default class VoicifyExtension extends Extension {
         });
 
         this._indicator.add_child(this._icon);
-        this._indicator.connect('button-press-event', () => this._onShortcutPressed());
+        this._indicator.connect('button-press-event', () => this._onRealtimeShortcutPressed());
 
         // Add to panel
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 
-    _setupGlobalShortcut() {
-        this._action = global.display.grab_accelerator(SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
+    _setupRealtimeShortcut() {
+        this._realtimeAction = global.display.grab_accelerator(REALTIME_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
 
-        if (this._action == Meta.KeyBindingAction.NONE) {
-            console.error('Unable to grab accelerator for Voicify');
+        if (this._realtimeAction == Meta.KeyBindingAction.NONE) {
+            console.error('Unable to grab accelerator for Realtime');
             return;
         }
 
-        const name = Meta.external_binding_name_for_action(this._action);
+        const name = Meta.external_binding_name_for_action(this._realtimeAction);
         Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
 
-        // Connect to accelerator activated signal
         global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
-            if (action === this._action) {
-                this._onShortcutPressed();
+            if (action === this._realtimeAction) {
+                this._onRealtimeShortcutPressed();
             }
         });
 
-        console.debug('Global shortcut registered:', SHORTCUT_KEY);
+        console.debug('Realtime shortcut registered:', REALTIME_SHORTCUT_KEY);
     }
 
-    _setupCancelShortcut() {
-        this._cancelAction = global.display.grab_accelerator(CANCEL_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
+    _setupPostAutoPasteShortcut() {
+        this._postAutoPasteAction = global.display.grab_accelerator(POST_AUTOPASTE_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
 
-        if (this._cancelAction == Meta.KeyBindingAction.NONE) {
-            console.error('Unable to grab accelerator for Voicify Cancel');
+        if (this._postAutoPasteAction == Meta.KeyBindingAction.NONE) {
+            console.error('Unable to grab accelerator for Post Auto-Paste');
             return;
         }
 
-        const name = Meta.external_binding_name_for_action(this._cancelAction);
+        const name = Meta.external_binding_name_for_action(this._postAutoPasteAction);
         Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
 
-        // Connect to accelerator activated signal
         global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
-            if (action === this._cancelAction) {
-                this._onCancelPressed();
+            if (action === this._postAutoPasteAction) {
+                this._onPostAutoPasteShortcutPressed();
             }
         });
 
-        console.debug('Cancel shortcut registered:', CANCEL_SHORTCUT_KEY);
+        console.debug('Post auto-paste shortcut registered:', POST_AUTOPASTE_SHORTCUT_KEY);
     }
 
-    _setupPostRecordShortcut() {
-        this._postRecordAction = global.display.grab_accelerator(POST_RECORD_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
+    _setupPostRouterShortcut() {
+        this._postRouterAction = global.display.grab_accelerator(POST_ROUTER_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
 
-        if (this._postRecordAction == Meta.KeyBindingAction.NONE) {
-            console.error('Unable to grab accelerator for Voicify Post-Record');
+        if (this._postRouterAction == Meta.KeyBindingAction.NONE) {
+            console.error('Unable to grab accelerator for Post Router');
             return;
         }
 
-        const name = Meta.external_binding_name_for_action(this._postRecordAction);
+        const name = Meta.external_binding_name_for_action(this._postRouterAction);
         Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
 
-        // Connect to accelerator activated signal
         global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
-            if (action === this._postRecordAction) {
-                this._onPostRecordShortcutPressed();
+            if (action === this._postRouterAction) {
+                this._onPostRouterShortcutPressed();
             }
         });
 
-        console.debug('Post-record shortcut registered:', POST_RECORD_SHORTCUT_KEY);
+        console.debug('Post router shortcut registered:', POST_ROUTER_SHORTCUT_KEY);
     }
 
-    _setupPostTranscriptionStopShortcut() {
-        this._postTranscriptionStopAction = global.display.grab_accelerator(POST_TRANSCRIPTION_STOP_KEY, Meta.KeyBindingFlags.NONE);
-
-        if (this._postTranscriptionStopAction == Meta.KeyBindingAction.NONE) {
-            console.error('Unable to grab accelerator for Voicify Post-Transcription Stop');
-            return;
-        }
-
-        const name = Meta.external_binding_name_for_action(this._postTranscriptionStopAction);
-        Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
-
-        // Connect to accelerator activated signal
-        global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
-            if (action === this._postTranscriptionStopAction) {
-                this._onPostTranscriptionStopPressed();
-            }
-        });
-
-        console.debug('Post-transcription stop shortcut registered:', POST_TRANSCRIPTION_STOP_KEY);
-    }
-
-    _onShortcutPressed() {
+    _onRealtimeShortcutPressed() {
         const currentTime = Date.now();
 
-        // Debounce: ignore if called too quickly after the last call
         if (currentTime - this._lastShortcutTime < this._debounceMs) {
-            console.debug('🔥 SHORTCUT DEBOUNCED - ignoring rapid call');
+            console.debug('🔥 REALTIME DEBOUNCED - ignoring rapid call');
             return;
         }
         this._lastShortcutTime = currentTime;
 
-        console.log('🔥 SHORTCUT PRESSED! Current state:', this._state, 'realtime mode:', this._isRealtimeMode);
+        console.log('🔥 REALTIME SHORTCUT PRESSED! Current state:', this._state);
 
-        switch (this._state) {
-            case State.IDLE:
-                if (this._isRealtimeMode) {
-                    this._startRealtimeRecording();
-                } else {
-                    this._startRecording();
-                }
-                break;
-            case State.RECORDING:
-                if (this._isRealtimeMode) {
-                    this._stopRealtimeRecording();
-                } else {
-                    this._stopRecording();
-                }
-                break;
-            case State.UPLOADING:
-            case State.FINISHED:
-                // Ignore - already processing
-                console.debug('Already processing - ignoring shortcut');
-                break;
-        }
-    }
-
-    _onCancelPressed() {
-        const currentTime = Date.now();
-
-        // Debounce: ignore if called too quickly after the last call
-        if (currentTime - this._lastCancelTime < this._debounceMs) {
-            console.debug('🔥 CANCEL DEBOUNCED - ignoring rapid call');
-            return;
-        }
-        this._lastCancelTime = currentTime;
-
-        console.log('🔥 CANCEL PRESSED! Current state:', this._state);
-
-        // Only cancel if currently recording
-        if (this._state === State.RECORDING) {
-            this._cancelRecording();
-        } else {
-            console.debug('Not recording - cancel ignored');
-        }
-    }
-
-    _onPostRecordShortcutPressed() {
-        const currentTime = Date.now();
-
-        // Debounce
-        if (currentTime - this._lastShortcutTime < this._debounceMs) {
-            console.debug('🔥 POST-RECORD DEBOUNCED - ignoring rapid call');
-            return;
-        }
-        this._lastShortcutTime = currentTime;
-
-        console.log('🔥 POST-RECORD SHORTCUT PRESSED! Current state:', this._state);
-
-        // Only start recording if idle
         if (this._state === State.IDLE) {
-            this._startPostRecordRecording();
+            this._startRealtimeRecording();
+        } else if (this._state === State.RECORDING && this._isRealtimeMode) {
+            this._stopRealtimeRecording();
         } else {
-            console.debug('Not idle - post-record start ignored');
+            console.debug('Wrong state or mode - ignoring');
         }
     }
 
-    _onPostTranscriptionStopPressed() {
+    _onPostAutoPasteShortcutPressed() {
         const currentTime = Date.now();
 
-        // Debounce
         if (currentTime - this._lastShortcutTime < this._debounceMs) {
-            console.debug('🔥 POST-TRANSCRIPTION STOP DEBOUNCED - ignoring rapid call');
+            console.debug('🔥 POST AUTO-PASTE DEBOUNCED - ignoring rapid call');
             return;
         }
         this._lastShortcutTime = currentTime;
 
-        console.log('🔥 POST-TRANSCRIPTION STOP PRESSED! Current state:', this._state, 'mode:', this._isPostTranscriptionMode);
+        console.log('🔥 POST AUTO-PASTE SHORTCUT PRESSED! Current state:', this._state);
 
-        // Only stop if recording in post-transcription mode
-        if (this._state === State.RECORDING && this._isPostTranscriptionMode) {
-            this._stopPostRecordRecording();
+        if (this._state === State.IDLE) {
+            this._startPostAutoPasteRecording();
+        } else if (this._state === State.RECORDING && this._isPostAutoPaste) {
+            this._stopPostAutoPasteRecording();
         } else {
-            console.debug('Not in post-transcription recording - stop ignored');
+            console.debug('Wrong state or mode - ignoring');
         }
     }
 
-    _startRecording() {
-        console.log('🔥 _startRecording() called - calling D-Bus ToggleRecording');
+    _onPostRouterShortcutPressed() {
+        const currentTime = Date.now();
 
-        if (!this._dbusProxy) {
-            console.error('D-Bus proxy not initialized');
+        if (currentTime - this._lastShortcutTime < this._debounceMs) {
+            console.debug('🔥 POST ROUTER DEBOUNCED - ignoring rapid call');
             return;
         }
+        this._lastShortcutTime = currentTime;
 
-        // Update focused window before starting recording
-        this._updateFocusedWindowInDaemon();
+        console.log('🔥 POST ROUTER SHORTCUT PRESSED! Current state:', this._state);
 
-        // Reset post-transcription mode
-        this._isPostTranscriptionMode = false;
-
-        // Call D-Bus method to toggle recording
-        this._dbusProxy.ToggleRecordingAsync()
-            .then(() => {
-                console.debug('D-Bus: ToggleRecording method called successfully');
-                // State will be updated via RecordingStarted signal
-            })
-            .catch(error => {
-                console.error('D-Bus: Failed to call ToggleRecording:', error);
-                // Reset state on error
-                this._state = State.IDLE;
-                this._updateIndicator();
-            });
+        if (this._state === State.IDLE) {
+            this._startPostRouterRecording();
+        } else if (this._state === State.RECORDING && this._isPostRouter) {
+            this._stopPostRouterRecording();
+        } else {
+            console.debug('Wrong state or mode - ignoring');
+        }
     }
+
 
     _startRealtimeRecording() {
-        console.log('🔥 _startRealtimeRecording() called - calling D-Bus StartRealtimeRecording');
+        console.log('🔥 _startRealtimeRecording() called');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
             return;
         }
 
-        // Update focused window before starting recording
         this._updateFocusedWindowInDaemon();
 
-        // Mark as realtime mode
         this._isRealtimeMode = true;
-        this._isPostTranscriptionMode = false;
-
-        // Reset accumulated text
+        this._isPostAutoPaste = false;
+        this._isPostRouter = false;
         this._accumulatedText = '';
 
-        // Call D-Bus method to start realtime recording
         this._dbusProxy.StartRealtimeRecordingAsync()
             .then(() => {
-                console.debug('D-Bus: StartRealtimeRecording method called successfully');
-                // State will be updated via RecordingStarted signal
+                console.debug('D-Bus: StartRealtimeRecording called');
             })
             .catch(error => {
                 console.error('D-Bus: Failed to call StartRealtimeRecording:', error);
-                // Reset state on error
                 this._state = State.IDLE;
+                this._isRealtimeMode = false;
                 this._updateIndicator();
             });
     }
 
-    _stopRecording() {
-        console.log('🔥 _stopRecording() called - calling D-Bus ToggleRecording');
+    _startPostAutoPasteRecording() {
+        console.log('🔥 _startPostAutoPasteRecording() called');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
             return;
         }
 
-        // Update focused window before stopping recording
         this._updateFocusedWindowInDaemon();
 
-        // Switch to uploading state immediately
-        this._state = State.UPLOADING;
-        this._updateIndicator();
-        this._updateWaveWidget();
+        this._isRealtimeMode = false;
+        this._isPostAutoPaste = true;
+        this._isPostRouter = false;
 
-        // Call D-Bus method to stop recording
-        this._dbusProxy.ToggleRecordingAsync()
+        this._dbusProxy.TogglePostTranscriptionAutoPasteAsync()
             .then(() => {
-                console.debug('D-Bus: ToggleRecording method called successfully');
-                // State will be updated via TranscriptionReady signal
+                console.debug('D-Bus: TogglePostTranscriptionAutoPaste called');
             })
             .catch(error => {
-                console.error('D-Bus: Failed to call ToggleRecording:', error);
-                // Reset state on error
+                console.error('D-Bus: Failed to call TogglePostTranscriptionAutoPaste:', error);
                 this._state = State.IDLE;
+                this._isPostAutoPaste = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+            });
+    }
+
+    _startPostRouterRecording() {
+        console.log('🔥 _startPostRouterRecording() called');
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        this._updateFocusedWindowInDaemon();
+
+        this._isRealtimeMode = false;
+        this._isPostAutoPaste = false;
+        this._isPostRouter = true;
+
+        this._dbusProxy.TogglePostTranscriptionRouterAsync()
+            .then(() => {
+                console.debug('D-Bus: TogglePostTranscriptionRouter called');
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to call TogglePostTranscriptionRouter:', error);
+                this._state = State.IDLE;
+                this._isPostRouter = false;
+                this._updateIndicator();
             });
     }
 
     _stopRealtimeRecording() {
-        console.log('🔥 _stopRealtimeRecording() called - calling D-Bus CancelRecording');
+        console.log('🔥 _stopRealtimeRecording() called');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
             return;
         }
 
-        // For realtime recording, we don't have a separate "stop" - we cancel it
-        // since transcription happens in real-time, not after recording ends
         this._dbusProxy.CancelRecordingAsync()
             .then(() => {
-                console.debug('D-Bus: CancelRecording method called successfully');
-                // Realtime: immediately return to idle and hide widget
+                console.debug('D-Bus: CancelRecording called');
                 this._state = State.IDLE;
+                this._isRealtimeMode = false;
                 this._updateIndicator();
                 this._hideWaveWidget();
             })
             .catch(error => {
                 console.error('D-Bus: Failed to call CancelRecording:', error);
-                // Reset state on error
                 this._state = State.IDLE;
+                this._isRealtimeMode = false;
                 this._updateIndicator();
                 this._hideWaveWidget();
             });
     }
 
-    _startPostRecordRecording() {
-        console.log('🔥 _startPostRecordRecording() called - calling D-Bus StartPostTranscriptionRecording');
+    _stopPostAutoPasteRecording() {
+        console.log('🔥 _stopPostAutoPasteRecording() called');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
             return;
         }
 
-        // Update focused window before starting recording
         this._updateFocusedWindowInDaemon();
 
-        // Mark as post-transcription mode
-        this._isRealtimeMode = false;
-        this._isPostTranscriptionMode = true;
-
-        // Call D-Bus StartPostTranscriptionRecording
-        this._dbusProxy.StartPostTranscriptionRecordingAsync()
-            .then(() => {
-                console.debug('D-Bus: StartPostTranscriptionRecording started');
-            })
-            .catch(error => {
-                console.error('D-Bus: Failed to start post-transcription recording:', error);
-                this._state = State.IDLE;
-                this._isPostTranscriptionMode = false;
-                this._updateIndicator();
-            });
-    }
-
-    _stopPostRecordRecording() {
-        console.log('🔥 _stopPostRecordRecording() called - calling D-Bus StopPostTranscriptionRecording');
-
-        if (!this._dbusProxy) {
-            console.error('D-Bus proxy not initialized');
-            return;
-        }
-
-        // Update focused window before stopping recording
-        this._updateFocusedWindowInDaemon();
-
-        // Switch to uploading state
         this._state = State.UPLOADING;
         this._updateIndicator();
         this._updateWaveWidget();
 
-        // Call D-Bus StopPostTranscriptionRecording
-        this._dbusProxy.StopPostTranscriptionRecordingAsync()
+        this._dbusProxy.TogglePostTranscriptionAutoPasteAsync()
             .then(() => {
-                console.debug('D-Bus: StopPostTranscriptionRecording called - routing through backend');
+                console.debug('D-Bus: TogglePostTranscriptionAutoPaste called (stop)');
             })
             .catch(error => {
-                console.error('D-Bus: Failed to stop post-transcription recording:', error);
+                console.error('D-Bus: Failed to call TogglePostTranscriptionAutoPaste:', error);
                 this._state = State.IDLE;
-                this._isPostTranscriptionMode = false;
+                this._isPostAutoPaste = false;
                 this._updateIndicator();
                 this._hideWaveWidget();
             });
     }
 
-    _cancelRecording() {
-        console.log('🔥 _cancelRecording() called - calling D-Bus CancelRecording');
+    _stopPostRouterRecording() {
+        console.log('🔥 _stopPostRouterRecording() called');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
             return;
         }
 
-        // Update focused window before canceling recording
         this._updateFocusedWindowInDaemon();
 
-        // Switch to canceled state immediately
-        this._state = State.CANCELED;
+        this._state = State.UPLOADING;
         this._updateIndicator();
         this._updateWaveWidget();
 
-        // Call D-Bus method to cancel recording
-        this._dbusProxy.CancelRecordingAsync()
+        this._dbusProxy.TogglePostTranscriptionRouterAsync()
             .then(() => {
-                console.debug('D-Bus: CancelRecording method called successfully');
-                // State will be updated via RecordingCancelled signal
+                console.debug('D-Bus: TogglePostTranscriptionRouter called (stop)');
             })
             .catch(error => {
-                console.error('D-Bus: Failed to call CancelRecording:', error);
-                // Reset state on error
+                console.error('D-Bus: Failed to call TogglePostTranscriptionRouter:', error);
                 this._state = State.IDLE;
+                this._isPostRouter = false;
                 this._updateIndicator();
                 this._hideWaveWidget();
             });
@@ -636,18 +516,20 @@ export default class VoicifyExtension extends Extension {
             return;
         }
 
-        if (this._isPostTranscriptionMode) {
-            // Post-transcription mode: backend routed through router, no auto-paste
+        if (this._isPostRouter) {
+            // Post-transcription router mode: backend routed through router, no auto-paste
             // Plugin will emit RequestPaste signal if it wants to paste
-            console.debug('Post-transcription mode - waiting for plugin RequestPaste signal');
+            console.debug('Post-router mode - waiting for plugin RequestPaste signal');
             this._state = State.FINISHED;
-            this._isPostTranscriptionMode = false;
+            this._isPostRouter = false;
             this._updateIndicator();
             this._startFinishedAnimation();
-        } else {
-            // Regular post-record mode: backend copied to clipboard, just paste and show animation
+        } else if (this._isPostAutoPaste) {
+            // Post-transcription auto-paste mode: backend copied to clipboard, paste and show animation
+            console.debug('Post-autopaste mode - performing auto-paste');
             this._performAutoPaste();
             this._state = State.FINISHED;
+            this._isPostAutoPaste = false;
             this._updateIndicator();
             this._startFinishedAnimation();
         }
@@ -691,7 +573,9 @@ export default class VoicifyExtension extends Extension {
     _onRecordingCancelled() {
         // Realtime: simply return to idle and hide the widget, no animation
         this._state = State.IDLE;
-        this._isPostTranscriptionMode = false;
+        this._isRealtimeMode = false;
+        this._isPostAutoPaste = false;
+        this._isPostRouter = false;
         this._updateIndicator();
         this._hideWaveWidget();
         console.debug('Recording cancelled');
