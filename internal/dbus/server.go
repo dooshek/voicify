@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/dooshek/voicify/internal/audio"
+	"github.com/dooshek/voicify/internal/clipboard"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/state"
@@ -327,11 +328,11 @@ func (s *Server) stopRecordingAsync() {
 
 		logger.Debugf("D-Bus: Transcription received: %s", transcription)
 
-		// Route transcription through the router (same as keyboard monitor)
-		router := transcriptionrouter.New(transcription)
-		if err := router.Route(transcription); err != nil {
-			logger.Errorf("D-Bus: Error routing transcription", err)
-			s.emitSignal("RecordingError", fmt.Sprintf("routing error: %v", err))
+		// D-Bus mode: Skip router, just copy to clipboard for extension
+		// Extension will handle pasting. Keyboard monitor has its own routing.
+		if err := clipboard.CopyToClipboard(transcription); err != nil {
+			logger.Error("D-Bus: Failed to copy to clipboard", err)
+			s.emitSignal("RecordingError", "clipboard error")
 			return
 		}
 

@@ -16,6 +16,7 @@ const LEVEL_UPDATE_INTERVAL_MS = 40; // Should be synchronized with @recorder.go
 
 const SHORTCUT_KEY = '<Ctrl><Super>v';
 const CANCEL_SHORTCUT_KEY = '<Ctrl><Super>x';
+const POST_RECORD_SHORTCUT_KEY = '<Ctrl><Super>c';
 
 // Controlls visualization size
 const BAR_WIDTH = 3;
@@ -97,6 +98,7 @@ export default class VoicifyExtension extends Extension {
         this._icon = null;
         this._action = null;
         this._cancelAction = null;
+        this._postRecordAction = null;
         this._state = State.IDLE;
         this._timeoutId = null;
         this._waveWidget = null;
@@ -126,6 +128,7 @@ export default class VoicifyExtension extends Extension {
         // Set up global shortcuts
         this._setupGlobalShortcut();
         this._setupCancelShortcut();
+        this._setupPostRecordShortcut();
     }
 
     disable() {
@@ -174,6 +177,15 @@ export default class VoicifyExtension extends Extension {
                 Shell.ActionMode.NONE
             );
             this._cancelAction = null;
+        }
+
+        if (this._postRecordAction !== null) {
+            global.display.ungrab_accelerator(this._postRecordAction);
+            Main.wm.allowKeybinding(
+                Meta.external_binding_name_for_action(this._postRecordAction),
+                Shell.ActionMode.NONE
+            );
+            this._postRecordAction = null;
         }
 
         // Clean up wave widget
@@ -254,6 +266,27 @@ export default class VoicifyExtension extends Extension {
         console.debug('Cancel shortcut registered:', CANCEL_SHORTCUT_KEY);
     }
 
+    _setupPostRecordShortcut() {
+        this._postRecordAction = global.display.grab_accelerator(POST_RECORD_SHORTCUT_KEY, Meta.KeyBindingFlags.NONE);
+
+        if (this._postRecordAction == Meta.KeyBindingAction.NONE) {
+            console.error('Unable to grab accelerator for Voicify Post-Record');
+            return;
+        }
+
+        const name = Meta.external_binding_name_for_action(this._postRecordAction);
+        Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
+
+        // Connect to accelerator activated signal
+        global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
+            if (action === this._postRecordAction) {
+                this._onPostRecordShortcutPressed();
+            }
+        });
+
+        console.debug('Post-record shortcut registered:', POST_RECORD_SHORTCUT_KEY);
+    }
+
     _onShortcutPressed() {
         const currentTime = Date.now();
 
@@ -309,6 +342,32 @@ export default class VoicifyExtension extends Extension {
         }
     }
 
+    _onPostRecordShortcutPressed() {
+        const currentTime = Date.now();
+
+        // Debounce
+        if (currentTime - this._lastShortcutTime < this._debounceMs) {
+            console.debug('🔥 POST-RECORD DEBOUNCED - ignoring rapid call');
+            return;
+        }
+        this._lastShortcutTime = currentTime;
+
+        console.log('🔥 POST-RECORD SHORTCUT PRESSED! Current state:', this._state);
+
+        switch (this._state) {
+            case State.IDLE:
+                this._startPostRecordRecording();
+                break;
+            case State.RECORDING:
+                this._stopPostRecordRecording();
+                break;
+            case State.UPLOADING:
+            case State.FINISHED:
+                console.debug('Already processing - ignoring shortcut');
+                break;
+        }
+    }
+
     _startRecording() {
         console.log('🔥 _startRecording() called - calling D-Bus ToggleRecording');
 
@@ -344,6 +403,9 @@ export default class VoicifyExtension extends Extension {
 
         // Update focused window before starting recording
         this._updateFocusedWindowInDaemon();
+
+        // Mark as realtime mode
+        this._isRealtimeMode = true;
 
         // Reset accumulated text
         this._accumulatedText = '';
@@ -420,6 +482,61 @@ export default class VoicifyExtension extends Extension {
             });
     }
 
+    _startPostRecordRecording() {
+        console.log('🔥 _startPostRecordRecording() called - calling D-Bus ToggleRecording');
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        // Update focused window before starting recording
+        this._updateFocusedWindowInDaemon();
+
+        // Mark as non-realtime mode
+        this._isRealtimeMode = false;
+
+        // Call D-Bus ToggleRecording (starts regular recording)
+        this._dbusProxy.ToggleRecordingAsync()
+            .then(() => {
+                console.debug('D-Bus: ToggleRecording started for post-record');
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to start post-record:', error);
+                this._state = State.IDLE;
+                this._updateIndicator();
+            });
+    }
+
+    _stopPostRecordRecording() {
+        console.log('🔥 _stopPostRecordRecording() called');
+
+        if (!this._dbusProxy) {
+            console.error('D-Bus proxy not initialized');
+            return;
+        }
+
+        // Update focused window before stopping recording
+        this._updateFocusedWindowInDaemon();
+
+        // Switch to uploading state
+        this._state = State.UPLOADING;
+        this._updateIndicator();
+        this._updateWaveWidget();
+
+        // Call D-Bus ToggleRecording to stop
+        this._dbusProxy.ToggleRecordingAsync()
+            .then(() => {
+                console.debug('D-Bus: ToggleRecording stopped - processing transcription');
+            })
+            .catch(error => {
+                console.error('D-Bus: Failed to stop post-record:', error);
+                this._state = State.IDLE;
+                this._updateIndicator();
+                this._hideWaveWidget();
+            });
+    }
+
     _cancelRecording() {
         console.log('🔥 _cancelRecording() called - calling D-Bus CancelRecording');
 
@@ -457,7 +574,9 @@ export default class VoicifyExtension extends Extension {
             // In realtime mode, we don't change UI; we already hid on cancel
             return;
         }
-        // Non-realtime fallback (unchanged)
+
+        // Post-record mode: backend copied to clipboard, just paste and show animation
+        this._performAutoPaste();
         this._state = State.FINISHED;
         this._updateIndicator();
         this._startFinishedAnimation();
