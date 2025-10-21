@@ -13,6 +13,14 @@
       <arg name="is_recording" type="b" direction="out"/>
     </method>
 
+    <method name="StartPostTranscriptionRecording">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="start_post_transcription_recording"/>
+    </method>
+
+    <method name="StopPostTranscriptionRecording">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="stop_post_transcription_recording"/>
+    </method>
+
     <!-- Signals -->
     <signal name="RecordingStarted">
       <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="recording_started"/>
@@ -32,6 +40,12 @@
     <signal name="InputLevel">
       <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="input_level"/>
       <arg name="level" type="d"/>
+    </signal>
+
+    <!-- Request paste signal for plugins to trigger text insertion -->
+    <signal name="RequestPaste">
+      <annotation name="org.freedesktop.DBus.GLib.CSymbol" value="request_paste"/>
+      <arg name="text" type="s"/>
     </signal>
   </interface>
 </node>

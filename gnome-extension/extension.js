@@ -17,6 +17,7 @@ const LEVEL_UPDATE_INTERVAL_MS = 40; // Should be synchronized with @recorder.go
 const SHORTCUT_KEY = '<Ctrl><Super>v';
 const CANCEL_SHORTCUT_KEY = '<Ctrl><Super>x';
 const POST_RECORD_SHORTCUT_KEY = '<Ctrl><Super>c';
+const POST_TRANSCRIPTION_STOP_KEY = '<Ctrl><Super>d';
 
 // Controlls visualization size
 const BAR_WIDTH = 3;
@@ -61,6 +62,8 @@ const VoicifyDBusInterface = `
   <interface name="com.dooshek.voicify.Recorder">
     <method name="ToggleRecording"/>
     <method name="StartRealtimeRecording"/>
+    <method name="StartPostTranscriptionRecording"/>
+    <method name="StopPostTranscriptionRecording"/>
     <method name="GetStatus">
       <arg name="is_recording" type="b" direction="out"/>
     </method>
@@ -86,6 +89,9 @@ const VoicifyDBusInterface = `
     <signal name="InputLevel">
       <arg name="level" type="d"/>
     </signal>
+    <signal name="RequestPaste">
+      <arg name="text" type="s"/>
+    </signal>
   </interface>
 </node>`;
 
@@ -99,6 +105,7 @@ export default class VoicifyExtension extends Extension {
         this._action = null;
         this._cancelAction = null;
         this._postRecordAction = null;
+        this._postTranscriptionStopAction = null;
         this._state = State.IDLE;
         this._timeoutId = null;
         this._waveWidget = null;
@@ -112,6 +119,7 @@ export default class VoicifyExtension extends Extension {
         this._lastShortcutTime = 0;
         this._lastCancelTime = 0;
         this._isRealtimeMode = true; // Back to real-time mode with fixed model
+        this._isPostTranscriptionMode = false; // Post-transcription mode flag
         this._accumulatedText = '';  // Store accumulated partial transcription
         this._debounceMs = 500; // Prevent multiple calls within 500ms
     }
@@ -129,6 +137,7 @@ export default class VoicifyExtension extends Extension {
         this._setupGlobalShortcut();
         this._setupCancelShortcut();
         this._setupPostRecordShortcut();
+        this._setupPostTranscriptionStopShortcut();
     }
 
     disable() {
@@ -186,6 +195,15 @@ export default class VoicifyExtension extends Extension {
                 Shell.ActionMode.NONE
             );
             this._postRecordAction = null;
+        }
+
+        if (this._postTranscriptionStopAction !== null) {
+            global.display.ungrab_accelerator(this._postTranscriptionStopAction);
+            Main.wm.allowKeybinding(
+                Meta.external_binding_name_for_action(this._postTranscriptionStopAction),
+                Shell.ActionMode.NONE
+            );
+            this._postTranscriptionStopAction = null;
         }
 
         // Clean up wave widget
@@ -287,6 +305,27 @@ export default class VoicifyExtension extends Extension {
         console.debug('Post-record shortcut registered:', POST_RECORD_SHORTCUT_KEY);
     }
 
+    _setupPostTranscriptionStopShortcut() {
+        this._postTranscriptionStopAction = global.display.grab_accelerator(POST_TRANSCRIPTION_STOP_KEY, Meta.KeyBindingFlags.NONE);
+
+        if (this._postTranscriptionStopAction == Meta.KeyBindingAction.NONE) {
+            console.error('Unable to grab accelerator for Voicify Post-Transcription Stop');
+            return;
+        }
+
+        const name = Meta.external_binding_name_for_action(this._postTranscriptionStopAction);
+        Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
+
+        // Connect to accelerator activated signal
+        global.display.connect('accelerator-activated', (display, action, deviceId, timestamp) => {
+            if (action === this._postTranscriptionStopAction) {
+                this._onPostTranscriptionStopPressed();
+            }
+        });
+
+        console.debug('Post-transcription stop shortcut registered:', POST_TRANSCRIPTION_STOP_KEY);
+    }
+
     _onShortcutPressed() {
         const currentTime = Date.now();
 
@@ -354,17 +393,31 @@ export default class VoicifyExtension extends Extension {
 
         console.log('🔥 POST-RECORD SHORTCUT PRESSED! Current state:', this._state);
 
-        switch (this._state) {
-            case State.IDLE:
-                this._startPostRecordRecording();
-                break;
-            case State.RECORDING:
-                this._stopPostRecordRecording();
-                break;
-            case State.UPLOADING:
-            case State.FINISHED:
-                console.debug('Already processing - ignoring shortcut');
-                break;
+        // Only start recording if idle
+        if (this._state === State.IDLE) {
+            this._startPostRecordRecording();
+        } else {
+            console.debug('Not idle - post-record start ignored');
+        }
+    }
+
+    _onPostTranscriptionStopPressed() {
+        const currentTime = Date.now();
+
+        // Debounce
+        if (currentTime - this._lastShortcutTime < this._debounceMs) {
+            console.debug('🔥 POST-TRANSCRIPTION STOP DEBOUNCED - ignoring rapid call');
+            return;
+        }
+        this._lastShortcutTime = currentTime;
+
+        console.log('🔥 POST-TRANSCRIPTION STOP PRESSED! Current state:', this._state, 'mode:', this._isPostTranscriptionMode);
+
+        // Only stop if recording in post-transcription mode
+        if (this._state === State.RECORDING && this._isPostTranscriptionMode) {
+            this._stopPostRecordRecording();
+        } else {
+            console.debug('Not in post-transcription recording - stop ignored');
         }
     }
 
@@ -378,6 +431,9 @@ export default class VoicifyExtension extends Extension {
 
         // Update focused window before starting recording
         this._updateFocusedWindowInDaemon();
+
+        // Reset post-transcription mode
+        this._isPostTranscriptionMode = false;
 
         // Call D-Bus method to toggle recording
         this._dbusProxy.ToggleRecordingAsync()
@@ -406,6 +462,7 @@ export default class VoicifyExtension extends Extension {
 
         // Mark as realtime mode
         this._isRealtimeMode = true;
+        this._isPostTranscriptionMode = false;
 
         // Reset accumulated text
         this._accumulatedText = '';
@@ -483,7 +540,7 @@ export default class VoicifyExtension extends Extension {
     }
 
     _startPostRecordRecording() {
-        console.log('🔥 _startPostRecordRecording() called - calling D-Bus ToggleRecording');
+        console.log('🔥 _startPostRecordRecording() called - calling D-Bus StartPostTranscriptionRecording');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
@@ -493,23 +550,25 @@ export default class VoicifyExtension extends Extension {
         // Update focused window before starting recording
         this._updateFocusedWindowInDaemon();
 
-        // Mark as non-realtime mode
+        // Mark as post-transcription mode
         this._isRealtimeMode = false;
+        this._isPostTranscriptionMode = true;
 
-        // Call D-Bus ToggleRecording (starts regular recording)
-        this._dbusProxy.ToggleRecordingAsync()
+        // Call D-Bus StartPostTranscriptionRecording
+        this._dbusProxy.StartPostTranscriptionRecordingAsync()
             .then(() => {
-                console.debug('D-Bus: ToggleRecording started for post-record');
+                console.debug('D-Bus: StartPostTranscriptionRecording started');
             })
             .catch(error => {
-                console.error('D-Bus: Failed to start post-record:', error);
+                console.error('D-Bus: Failed to start post-transcription recording:', error);
                 this._state = State.IDLE;
+                this._isPostTranscriptionMode = false;
                 this._updateIndicator();
             });
     }
 
     _stopPostRecordRecording() {
-        console.log('🔥 _stopPostRecordRecording() called');
+        console.log('🔥 _stopPostRecordRecording() called - calling D-Bus StopPostTranscriptionRecording');
 
         if (!this._dbusProxy) {
             console.error('D-Bus proxy not initialized');
@@ -524,14 +583,15 @@ export default class VoicifyExtension extends Extension {
         this._updateIndicator();
         this._updateWaveWidget();
 
-        // Call D-Bus ToggleRecording to stop
-        this._dbusProxy.ToggleRecordingAsync()
+        // Call D-Bus StopPostTranscriptionRecording
+        this._dbusProxy.StopPostTranscriptionRecordingAsync()
             .then(() => {
-                console.debug('D-Bus: ToggleRecording stopped - processing transcription');
+                console.debug('D-Bus: StopPostTranscriptionRecording called - routing through backend');
             })
             .catch(error => {
-                console.error('D-Bus: Failed to stop post-record:', error);
+                console.error('D-Bus: Failed to stop post-transcription recording:', error);
                 this._state = State.IDLE;
+                this._isPostTranscriptionMode = false;
                 this._updateIndicator();
                 this._hideWaveWidget();
             });
@@ -570,16 +630,27 @@ export default class VoicifyExtension extends Extension {
 
     _onTranscriptionReady(text) {
         console.debug('Transcription ready (daemon final):', text);
+
         if (this._isRealtimeMode) {
             // In realtime mode, we don't change UI; we already hid on cancel
             return;
         }
 
-        // Post-record mode: backend copied to clipboard, just paste and show animation
-        this._performAutoPaste();
-        this._state = State.FINISHED;
-        this._updateIndicator();
-        this._startFinishedAnimation();
+        if (this._isPostTranscriptionMode) {
+            // Post-transcription mode: backend routed through router, no auto-paste
+            // Plugin will emit RequestPaste signal if it wants to paste
+            console.debug('Post-transcription mode - waiting for plugin RequestPaste signal');
+            this._state = State.FINISHED;
+            this._isPostTranscriptionMode = false;
+            this._updateIndicator();
+            this._startFinishedAnimation();
+        } else {
+            // Regular post-record mode: backend copied to clipboard, just paste and show animation
+            this._performAutoPaste();
+            this._state = State.FINISHED;
+            this._updateIndicator();
+            this._startFinishedAnimation();
+        }
     }
 
     _onCompleteTranscription(text) {
@@ -589,6 +660,19 @@ export default class VoicifyExtension extends Extension {
         if (this._isRealtimeMode && text && text.length > 0) {
             this._injectTextDelta(text + ' ');
         }
+    }
+
+    _onRequestPaste(text) {
+        console.debug('RequestPaste signal received from plugin:', text);
+
+        // Copy to clipboard
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+
+        // Trigger paste with small delay
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._performAutoPaste();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _injectTextDelta(text) {
@@ -607,6 +691,7 @@ export default class VoicifyExtension extends Extension {
     _onRecordingCancelled() {
         // Realtime: simply return to idle and hide the widget, no animation
         this._state = State.IDLE;
+        this._isPostTranscriptionMode = false;
         this._updateIndicator();
         this._hideWaveWidget();
         console.debug('Recording cancelled');
@@ -971,6 +1056,12 @@ export default class VoicifyExtension extends Extension {
             } else {
                 console.debug('🔥 Invalid level value:', level, 'type:', typeof level);
             }
+        });
+
+        // Request paste from plugins
+        this._dbusProxy.connectSignal('RequestPaste', (proxy, sender, [text]) => {
+            console.debug('D-Bus: RequestPaste signal received from plugin');
+            this._onRequestPaste(text);
         });
 
         console.debug('🔥 D-Bus proxy initialized with signals connected');

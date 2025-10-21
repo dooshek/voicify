@@ -12,14 +12,15 @@ var (
 )
 
 type AppState struct {
-	Config        *types.Config
-	ttsManager    interface{} // Use interface{} to avoid import cycle, will be *tts.Manager
-	router        interface{} // Use interface{} to avoid import cycle, will be *transcriptionrouter.Router
+	Config          *types.Config
+	ttsManager      interface{} // Use interface{} to avoid import cycle, will be *tts.Manager
+	router          interface{} // Use interface{} to avoid import cycle, will be *transcriptionrouter.Router
 	linearMCPClient interface{} // Use interface{} to avoid import cycle, will be *linear.LinearMCPClient
-    // Focused window cache provided by GNOME extension via D-Bus
-    focusedWindowTitle string
-    focusedWindowApp   string
-    mu                 sync.RWMutex
+	dbusServer      interface{} // Use interface{} to avoid import cycle, will be *dbus.Server
+	// Focused window cache provided by GNOME extension via D-Bus
+	focusedWindowTitle string
+	focusedWindowApp   string
+	mu                 sync.RWMutex
 }
 
 func Init(cfg *types.Config) {
@@ -85,17 +86,27 @@ func (s *AppState) GetLinearMCPClient() interface{} {
 
 // SetFocusedWindow updates cached info about the focused window
 func (s *AppState) SetFocusedWindow(title string, app string) {
-    s.mu.Lock()
-    s.focusedWindowTitle = title
-    s.focusedWindowApp = app
-    s.mu.Unlock()
+	s.mu.Lock()
+	s.focusedWindowTitle = title
+	s.focusedWindowApp = app
+	s.mu.Unlock()
 }
 
 // GetFocusedWindow returns cached focused window info (title, app)
 func (s *AppState) GetFocusedWindow() (string, string) {
-    s.mu.RLock()
-    title := s.focusedWindowTitle
-    app := s.focusedWindowApp
-    s.mu.RUnlock()
-    return title, app
+	s.mu.RLock()
+	title := s.focusedWindowTitle
+	app := s.focusedWindowApp
+	s.mu.RUnlock()
+	return title, app
+}
+
+// SetDBusServer sets the DBus server in the global state
+func (s *AppState) SetDBusServer(server interface{}) {
+	s.dbusServer = server
+}
+
+// GetDBusServer returns the DBus server from global state
+func (s *AppState) GetDBusServer() interface{} {
+	return s.dbusServer
 }

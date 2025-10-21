@@ -181,6 +181,8 @@ func main() {
 			logger.Error("Failed to create D-Bus server", err)
 			os.Exit(1)
 		}
+		// Store DBus server in global state for plugin API access
+		state.Get().SetDBusServer(dbusServer)
 		startMessage = "D-Bus daemon"
 	} else {
 		// Keyboard monitoring mode

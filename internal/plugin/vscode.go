@@ -53,7 +53,7 @@ func (a *VSCodeAction) Execute(transcription string) error {
 	}
 
 	logger.Debug("VSCode plugin: VSCode is focused, executing action")
-	return PasteWithReturn(transcription)
+	return RequestPaste(transcription)
 }
 
 // GetMetadata returns metadata about the action

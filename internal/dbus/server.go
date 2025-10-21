@@ -23,13 +23,14 @@ const (
 
 // Server implements D-Bus service for voicify recording
 type Server struct {
-	conn             *dbus.Conn
-	recorder         *audio.Recorder
-	realtimeRecorder *audio.RealtimeRecorder
-	isRealtimeMode   bool
-	ctx              context.Context
-	cancel           context.CancelFunc
-	mu               sync.Mutex
+	conn                  *dbus.Conn
+	recorder              *audio.Recorder
+	realtimeRecorder      *audio.RealtimeRecorder
+	isRealtimeMode        bool
+	postTranscriptionMode bool
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	mu                    sync.Mutex
 	// level forwarding
 	levelForwardCancel context.CancelFunc
 	// realtime transcription forwarding
@@ -114,6 +115,12 @@ func (s *Server) Start() error {
 					Name: "CancelRecording",
 				},
 				{
+					Name: "StartPostTranscriptionRecording",
+				},
+				{
+					Name: "StopPostTranscriptionRecording",
+				},
+				{
 					Name: "UpdateFocusedWindow",
 					Args: []introspect.Arg{
 						{Name: "title", Type: "s", Direction: "in"},
@@ -152,6 +159,12 @@ func (s *Server) Start() error {
 					Name: "InputLevel",
 					Args: []introspect.Arg{
 						{Name: "level", Type: "d"},
+					},
+				},
+				{
+					Name: "RequestPaste",
+					Args: []introspect.Arg{
+						{Name: "text", Type: "s"},
 					},
 				},
 			},
@@ -302,6 +315,52 @@ func (s *Server) CancelRecording() *dbus.Error {
 	return nil
 }
 
+// StartPostTranscriptionRecording starts post-transcription recording mode (D-Bus method)
+func (s *Server) StartPostTranscriptionRecording() *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debugf("D-Bus: StartPostTranscriptionRecording called")
+
+	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
+		return dbus.MakeFailedError(fmt.Errorf("recording already in progress"))
+	}
+
+	// Set post-transcription mode flags
+	s.postTranscriptionMode = true
+	s.isRealtimeMode = false
+
+	// Start regular recording
+	logger.Debugf("D-Bus: Starting post-transcription recording")
+	s.recorder.Start()
+
+	// Emit signal
+	s.emitSignal("RecordingStarted")
+
+	// Start forwarding input levels
+	s.startForwardingLevels()
+
+	return nil
+}
+
+// StopPostTranscriptionRecording stops post-transcription recording and routes through router (D-Bus method)
+func (s *Server) StopPostTranscriptionRecording() *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debugf("D-Bus: StopPostTranscriptionRecording called")
+
+	if !s.recorder.IsRecording() {
+		logger.Debugf("D-Bus: No recording in progress")
+		return nil
+	}
+
+	// Process in background
+	go s.stopPostTranscriptionAsync()
+
+	return nil
+}
+
 // UpdateFocusedWindow updates the cached focused window info (D-Bus method)
 func (s *Server) UpdateFocusedWindow(title string, app string) *dbus.Error {
 	logger.Debugf("D-Bus: UpdateFocusedWindow called - title: %s, app: %s", title, app)
@@ -328,15 +387,62 @@ func (s *Server) stopRecordingAsync() {
 
 		logger.Debugf("D-Bus: Transcription received: %s", transcription)
 
-		// D-Bus mode: Skip router, just copy to clipboard for extension
-		// Extension will handle pasting. Keyboard monitor has its own routing.
-		if err := clipboard.CopyToClipboard(transcription); err != nil {
-			logger.Error("D-Bus: Failed to copy to clipboard", err)
-			s.emitSignal("RecordingError", "clipboard error")
+		// Check if this is post-transcription mode
+		if s.postTranscriptionMode {
+			logger.Debugf("D-Bus: Post-transcription mode - routing through router without clipboard copy")
+			// Route via router - plugins may call RequestPaste
+			router := transcriptionrouter.New(transcription)
+			if err := router.Route(transcription); err != nil {
+				logger.Errorf("D-Bus: Error routing transcription", err)
+				s.emitSignal("RecordingError", fmt.Sprintf("routing error: %v", err))
+			}
+			// Reset post-transcription mode
+			s.postTranscriptionMode = false
+			// Emit signal that transcription is ready (but not pasted)
+			s.emitSignal("TranscriptionReady", transcription)
+		} else {
+			// Regular mode: copy to clipboard for extension
+			// Extension will handle pasting. Keyboard monitor has its own routing.
+			if err := clipboard.CopyToClipboard(transcription); err != nil {
+				logger.Error("D-Bus: Failed to copy to clipboard", err)
+				s.emitSignal("RecordingError", "clipboard error")
+				return
+			}
+			// Emit transcription ready signal
+			s.emitSignal("TranscriptionReady", transcription)
+		}
+	}()
+}
+
+// stopPostTranscriptionAsync stops recording in post-transcription mode and routes through router
+func (s *Server) stopPostTranscriptionAsync() {
+	go func() {
+		logger.Debugf("D-Bus: Stopping post-transcription recording")
+
+		transcription, err := s.recorder.Stop()
+		if err != nil {
+			logger.Errorf("D-Bus: Error stopping recording", err)
+			s.emitSignal("RecordingError", err.Error())
+			s.postTranscriptionMode = false
 			return
 		}
 
-		// Emit transcription ready signal
+		// Stop forwarding levels
+		s.stopForwardingLevels()
+
+		logger.Debugf("D-Bus: Post-transcription received: %s", transcription)
+
+		// Route through router - plugins may call RequestPaste
+		router := transcriptionrouter.New(transcription)
+		if err := router.Route(transcription); err != nil {
+			logger.Errorf("D-Bus: Error routing post-transcription", err)
+			s.emitSignal("RecordingError", fmt.Sprintf("routing error: %v", err))
+		}
+
+		// Reset mode
+		s.postTranscriptionMode = false
+
+		// Emit signal that transcription is ready (but not auto-pasted)
 		s.emitSignal("TranscriptionReady", transcription)
 	}()
 }
@@ -361,6 +467,17 @@ func (s *Server) emitSignal(name string, args ...interface{}) {
 			logger.Debugf("D-Bus: Emitted signal: %s", name)
 		}
 	}
+}
+
+// EmitRequestPaste emits a RequestPaste signal for plugins to trigger text insertion
+func (s *Server) EmitRequestPaste(text string) error {
+	if s.conn == nil {
+		return fmt.Errorf("no D-Bus connection")
+	}
+
+	logger.Debugf("D-Bus: Plugin requesting paste of text: %s", text)
+	s.emitSignal("RequestPaste", text)
+	return nil
 }
 
 // startForwardingLevels begins reading from recorder.LevelChan() and emits InputLevel signals

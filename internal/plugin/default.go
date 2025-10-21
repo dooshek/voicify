@@ -40,8 +40,8 @@ func (p *DefaultPlugin) GetActions(transcription string) []pluginapi.PluginActio
 func (a *DefaultAction) Execute(transcription string) error {
 	logger.Debug("Default plugin: Executing default action - copy to clipboard and paste")
 
-	// Copy to clipboard and paste
-	return PasteWithReturn(transcription)
+	// Use RequestPaste which will use DBus if available, or fallback to clipboard
+	return RequestPaste(transcription)
 }
 
 // GetMetadata returns metadata about the action
