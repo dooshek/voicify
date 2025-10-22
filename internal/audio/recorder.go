@@ -35,14 +35,14 @@ const (
 	// agcNoiseGate: Próg bramki szumów dla WYJŚCIA (nie zeruje envelope). Poniżej progu nie rysujemy kreski.
 	// agcVisualBoost: Dodatkowy mnożnik na wyjściu (tylko do wizualizacji, nie wpływa na gain).
 	// uiMaxLevel: Maksymalny poziom dla UI (docinamy do tej wartości po skali logarytmicznej).
-	agcAttackMs  = 10.0  // ms
-	agcReleaseMs = 550.0 // ms
+	agcAttackMs  = 30.0  // ms
+	agcReleaseMs = 100.0 // ms
 	// agcEnvelopeSizeMs: Jeśli > 0, użyj tej samej wartości (ms) dla attack i release
 	// przy obliczaniu obwiedni. 0 oznacza wyłączone (używane są osobne agcAttackMs/agcReleaseMs).
 	agcEnvelopeSizeMs = 0.0
 	agcTarget         = 1.0
-	agcMaxGain        = 5.0
-	agcMinGain        = 0.2
+	agcMaxGain        = 3.0
+	agcMinGain        = 0.05
 	agcGainAttack     = 0.03
 	agcGainRelease    = 0.02
 	agcNoiseGate      = 0.1
@@ -232,7 +232,6 @@ func (r *Recorder) record() {
 	os.WriteFile(wavPath, wavData, 0o644)
 
 	logger.Info("🎙️ Processing audio...")
-	oggStartTime := time.Now()
 
 	oggPath := filepath.Join(r.fileOps.GetRecordingsDir(), oggFilename)
 	err = ffmpeg.Input(wavPath).
@@ -243,18 +242,13 @@ func (r *Recorder) record() {
 			"ar":                "16000",
 			"compression_level": "5",
 			"threads":           "auto",
+			"af":                "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB:detection=peak:stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB",
 		}).
 		OverWriteOutput().
 		Run()
 	if err != nil {
 		logger.Error("Error converting to Ogg Vorbis", err)
 		return
-	}
-
-	oggProcessingTime := time.Since(oggStartTime)
-
-	if fileInfo, err := os.Stat(oggPath); err == nil {
-		logger.Debugf("Conversion from WAV to Ogg Vorbis took: %d ms, file size is: %.2f kB", oggProcessingTime.Milliseconds(), float64(fileInfo.Size())/1024)
 	}
 
 	logger.Info("🎙️ Transcribing audio...")

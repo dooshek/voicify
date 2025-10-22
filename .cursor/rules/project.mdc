@@ -45,10 +45,15 @@ Plugins are located in [internal/plugin/](mdc:internal/plugin/) and follow this 
 ### Linear Plugin Architecture
 The Linear plugin ([internal/plugin/linear.go](mdc:internal/plugin/linear.go)) includes:
 
-- **MCP Client**: [internal/plugin/linear/mcp_client.go](mdc:internal/plugin/linear/mcp_client.go) - Handles Personal Access Token (PAT) auth and MCP protocol
+- **MCP Client**: [internal/plugin/linear/mcp_client.go](mdc:internal/plugin/linear/mcp_client.go) - Handles MCP protocol communication via npx mcp-remote
+  - **Asynchronous initialization**: Started in background goroutine to avoid blocking main thread
+  - **Retry mechanism**: 3 attempts with exponential backoff (2s, 4s)
+  - **Timeout**: 10 seconds per attempt
+  - **Graceful degradation**: Plugin unavailable if MCP fails to initialize, clearly logged
 - **Agentic Loop**: [internal/plugin/linear/agentic_loop.go](mdc:internal/plugin/linear/agentic_loop.go) - Dynamic LLM-driven conversation flow
+  - **Lazy initialization**: Created on first use, not during plugin initialization
+  - **Global state**: Uses shared MCP client from global state
 - **Configuration**: Linear PAT settings in [internal/types/types.go](mdc:internal/types/types.go)
-- **Interactive Setup**: Prompts user for PAT and saves to config automatically
 
 ### Configuration Management
 Configuration is managed through:
@@ -60,24 +65,6 @@ Configuration is managed through:
 ### Build and Development
 - **Main binary**: `go build -o bin/voicify ./cmd/voicify`
 - **Interactive setup**: Linear setup is integrated into main application
-- **Service management**: Voicify runs as systemd user service
-
-### Testing and Restart Procedures
-- **CRITICAL: After ANY changes** (Go backend OR extension): Run `./test.sh`
-- **The test.sh script automatically**:
-  1. Checks for Go changes and rebuilds if needed
-  2. Restarts Voicify service if rebuilt
-  3. Syncs extension files to GNOME
-  4. Reloads extension
-  5. Shows all relevant logs (backend + extension)
-- **Manual commands** (if needed):
-  - Rebuild: `go build -o bin/voicify ./cmd/voicify`
-  - Restart service: `systemctl --user restart voicify`
-  - Check logs: `tail -f ~/.config/voicify/voicify.log`
-- **Service status**: `systemctl --user status voicify`
-- **Log monitoring**: `journalctl --user -u voicify -f` for systemd logs
-- **Extension logs**: `journalctl --user -u gnome-shell -f` for GNOME Shell errors
-- **Log timing**: test.sh includes 5-second sleep before checking logs to wait for processing completion
 
 ### TTS System
 - **Voice mapping**: Automatic gender detection (alloy=female, echo=male, etc.)
@@ -91,10 +78,8 @@ Configuration is managed through:
 2. **Test compilation frequently** - logger errors are common and must be caught early
 3. **Use proper error handling** with logger functions
 4. **Follow the plugin interface** for consistency across plugins
-5. **Personal Access Tokens must be stored in config** for Linear MCP integration
-6. **CRITICAL: After ANY code changes** - run `./test.sh` to rebuild, restart, and check logs
-7. **Monitor logs from both sources** - Voicify service and GNOME Shell extension
-8. **Wait for processing completion** - Always add sleep before checking logs to ensure full processing
+5. **MCP initialization is asynchronous** - plugins should use lazy initialization for MCP-dependent components
+6. **Graceful degradation** - external service failures should be clearly logged but not crash the application
 
 ## Important
 
