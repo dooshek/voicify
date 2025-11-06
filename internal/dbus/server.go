@@ -3,7 +3,10 @@ package dbus
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/dooshek/voicify/internal/audio"
 	"github.com/dooshek/voicify/internal/clipboard"
@@ -38,6 +41,8 @@ type Server struct {
 	realtimeForwardCancel context.CancelFunc
 	// accumulated realtime transcription across complete chunks
 	realtimeAccum string
+	// media playback state tracking
+	wasMediaPlaying bool
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
@@ -207,6 +212,9 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 		logger.Debugf("D-Bus: Stopping post-transcription auto-paste recording")
 		go s.stopPostTranscriptionAutoPasteAsync()
 	} else {
+		// Check if media is currently playing before starting recording
+		s.wasMediaPlaying = s.checkMediaPlaying()
+
 		// Start recording in auto-paste mode
 		logger.Debugf("D-Bus: Starting post-transcription auto-paste recording")
 		s.postTranscriptionAutoPaste = true
@@ -233,6 +241,9 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 		logger.Debugf("D-Bus: Stopping post-transcription router recording")
 		go s.stopPostTranscriptionRouterAsync()
 	} else {
+		// Check if media is currently playing before starting recording
+		s.wasMediaPlaying = s.checkMediaPlaying()
+
 		// Start recording in router mode
 		logger.Debugf("D-Bus: Starting post-transcription router recording")
 		s.postTranscriptionRouterMode = true
@@ -257,6 +268,9 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
 		return dbus.MakeFailedError(fmt.Errorf("recording already in progress"))
 	}
+
+	// Check if media is currently playing before starting recording
+	s.wasMediaPlaying = s.checkMediaPlaying()
 
 	s.isRealtimeMode = true
 	// reset accumulator for this session
@@ -304,6 +318,9 @@ func (s *Server) CancelRecording() *dbus.Error {
 		s.stopForwardingRealtimeTranscription()
 		s.stopForwardingRealtimeLevels()
 
+		// Resume media playback after recording stops
+		go s.resumeMediaPlayback()
+
 		// After cancelling realtime, route the accumulated transcription if present
 		finalText := s.realtimeAccum
 		s.realtimeAccum = "" // reset for next run
@@ -327,6 +344,9 @@ func (s *Server) CancelRecording() *dbus.Error {
 		logger.Debugf("D-Bus: Cancelling regular recording")
 		s.recorder.Cancel()
 		s.stopForwardingLevels()
+
+		// Resume media playback after recording stops
+		go s.resumeMediaPlayback()
 	}
 
 	// Emit signal
@@ -344,6 +364,47 @@ func (s *Server) UpdateFocusedWindow(title string, app string) *dbus.Error {
 	return nil
 }
 
+// checkMediaPlaying checks if any audio stream is currently playing (not corked)
+func (s *Server) checkMediaPlaying() bool {
+	cmd := exec.Command("pactl", "list", "sink-inputs")
+	output, err := cmd.Output()
+	if err != nil {
+		logger.Debugf("Failed to check media playing state: %v", err)
+		return false
+	}
+
+	// Parse output to find if any stream is not corked (actively playing)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Corked: no") {
+			logger.Debugf("Detected active media playback (uncorked stream)")
+			return true
+		}
+	}
+
+	logger.Debugf("No active media playback detected")
+	return false
+}
+
+// resumeMediaPlayback attempts to resume media playback by simulating PLAY key press
+// Only resumes if media was playing before recording started
+func (s *Server) resumeMediaPlayback() {
+	if !s.wasMediaPlaying {
+		logger.Debugf("Skipping media resume - nothing was playing before recording")
+		return
+	}
+
+	// Delay to allow microphone device to switch back (3 seconds for hardware transition)
+	time.Sleep(3 * time.Second)
+
+	logger.Debugf("Attempting to resume media playback via xdotool")
+	cmd := exec.Command("xdotool", "key", "XF86AudioPlay")
+	if err := cmd.Run(); err != nil {
+		logger.Debugf("Failed to resume media playback (xdotool not available or failed): %v", err)
+	}
+}
+
 // stopPostTranscriptionAutoPasteAsync stops recording in auto-paste mode
 func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 	go func() {
@@ -354,11 +415,15 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())
 			s.postTranscriptionAutoPaste = false
+			s.resumeMediaPlayback()
 			return
 		}
 
 		// Stop forwarding levels
 		s.stopForwardingLevels()
+
+		// Resume media playback after recording stops
+		go s.resumeMediaPlayback()
 
 		logger.Debugf("D-Bus: Post-transcription auto-paste received: %s", transcription)
 
@@ -388,11 +453,15 @@ func (s *Server) stopPostTranscriptionRouterAsync() {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())
 			s.postTranscriptionRouterMode = false
+			s.resumeMediaPlayback()
 			return
 		}
 
 		// Stop forwarding levels
 		s.stopForwardingLevels()
+
+		// Resume media playback after recording stops
+		go s.resumeMediaPlayback()
 
 		logger.Debugf("D-Bus: Post-transcription router received: %s", transcription)
 
