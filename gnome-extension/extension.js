@@ -41,12 +41,7 @@ const CONTAINER_PADDING_LEFT = 8;
 const CONTAINER_WIDTH = 131;
 const BAR_HEIGHT = (CONTAINER_HEIGHT / 2) + 1;
 
-// Try virtual keyboard paste (works on X11)
-const seat = Clutter.get_default_backend().get_default_seat();
-const virtualKeyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
-
-// Recording statesSprawdzam teraz jak to działa, trochę się rwie.
-
+// Recording states
 const State = {
     IDLE: 'idle',
     RECORDING: 'recording',
@@ -119,10 +114,20 @@ export default class VoicifyExtension extends Extension {
         this._isPostRouter = false; // Post-transcription router mode
         this._accumulatedText = '';  // Store accumulated partial transcription
         this._debounceMs = 500; // Prevent multiple calls within 500ms
+        this._virtualKeyboard = null; // Virtual keyboard device for X11 paste
     }
 
     enable() {
         console.debug('Voicify extension enabled');
+
+        // Initialize virtual keyboard for X11 paste
+        try {
+            const seat = Clutter.get_default_backend().get_default_seat();
+            this._virtualKeyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        } catch (error) {
+            console.debug('Failed to create virtual keyboard device:', error.message);
+            this._virtualKeyboard = null;
+        }
 
         // Initialize D-Bus proxy
         this._initDBusProxy();
@@ -583,13 +588,18 @@ export default class VoicifyExtension extends Extension {
 
     _performAutoPaste() {
         try {
+            if (!this._virtualKeyboard) {
+                console.debug('Virtual keyboard not available');
+                return;
+            }
+
             const eventTime = global.get_current_time();
 
             // Send Ctrl+V
-            virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
-            virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
-            virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
-            virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+            this._virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+            this._virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+            this._virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+            this._virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
 
             console.debug('Auto-paste performed with virtual keyboard');
         } catch (error) {
