@@ -90,6 +90,11 @@ const VoicifyDBusInterface = `
 
 const VoicifyProxy = Gio.DBusProxy.makeProxyWrapper(VoicifyDBusInterface);
 
+// D-Bus service configuration for on-demand daemon activation
+const DBUS_SERVICE_NAME = 'com.dooshek.voicify';
+const VOICIFY_BINARY_PATH = GLib.get_home_dir() + '/bin/voicify';
+const VOICIFY_LOG_PATH = GLib.get_home_dir() + '/.config/voicify/voicify.log';
+
 export default class VoicifyExtension extends Extension {
     constructor(metadata) {
         super(metadata);
@@ -119,6 +124,9 @@ export default class VoicifyExtension extends Extension {
 
     enable() {
         console.debug('Voicify extension enabled');
+
+        // Ensure D-Bus service file exists for on-demand daemon activation
+        this._ensureDBusServiceFile();
 
         // Initialize virtual keyboard for X11 paste
         try {
@@ -889,6 +897,80 @@ export default class VoicifyExtension extends Extension {
             waveOffset += waveSpeed;
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    _ensureDBusServiceFile() {
+        // Create D-Bus service file for on-demand daemon activation
+        // This allows the daemon to start automatically when extension calls D-Bus methods
+        const serviceDir = GLib.get_home_dir() + '/.local/share/dbus-1/services';
+        const serviceFile = serviceDir + '/' + DBUS_SERVICE_NAME + '.service';
+
+        // Check if service file already exists
+        const file = Gio.File.new_for_path(serviceFile);
+        if (file.query_exists(null)) {
+            console.debug('D-Bus service file already exists:', serviceFile);
+            return;
+        }
+
+        // Check if voicify binary exists
+        const binaryFile = Gio.File.new_for_path(VOICIFY_BINARY_PATH);
+        if (!binaryFile.query_exists(null)) {
+            console.error('Voicify binary not found at:', VOICIFY_BINARY_PATH);
+            console.error('Please install voicify binary to ~/bin/voicify');
+            return;
+        }
+
+        // Create services directory if it doesn't exist
+        const dir = Gio.File.new_for_path(serviceDir);
+        if (!dir.query_exists(null)) {
+            try {
+                dir.make_directory_with_parents(null);
+                console.debug('Created D-Bus services directory:', serviceDir);
+            } catch (e) {
+                console.error('Failed to create D-Bus services directory:', e.message);
+                return;
+            }
+        }
+
+        // Create service file content
+        const serviceContent = `[D-BUS Service]
+Name=${DBUS_SERVICE_NAME}
+Exec=${VOICIFY_BINARY_PATH} --daemon --log-level=debug --log-filename=${VOICIFY_LOG_PATH}
+`;
+
+        // Write service file
+        try {
+            const outputStream = file.replace(null, false, Gio.FileCreateFlags.NONE, null);
+            const bytes = new TextEncoder().encode(serviceContent);
+            outputStream.write_all(bytes, null);
+            outputStream.close(null);
+            console.debug('Created D-Bus service file:', serviceFile);
+
+            // Reload D-Bus config to pick up new service
+            this._reloadDBusConfig();
+        } catch (e) {
+            console.error('Failed to create D-Bus service file:', e.message);
+        }
+    }
+
+    _reloadDBusConfig() {
+        // Send ReloadConfig to D-Bus daemon to pick up new service files
+        try {
+            Gio.DBus.session.call_sync(
+                'org.freedesktop.DBus',
+                '/org/freedesktop/DBus',
+                'org.freedesktop.DBus',
+                'ReloadConfig',
+                null,
+                null,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null
+            );
+            console.debug('D-Bus config reloaded');
+        } catch (e) {
+            console.debug('Failed to reload D-Bus config (non-critical):', e.message);
+        }
     }
 
     _initDBusProxy() {
