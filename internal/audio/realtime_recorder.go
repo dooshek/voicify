@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
@@ -34,11 +33,8 @@ type RealtimeRecorder struct {
 	completeChan chan string
 	errorChan    chan error
 
-	// Audio level tracking (reuse from regular recorder)
-	levelChan     chan float64
-	lastLevelEmit time.Time
-	agcGain       float64
-	agcEnv        float64
+	// Audio level tracking
+	level *LevelProcessor
 
 	// Context for cancellation
 	ctx    context.Context
@@ -65,9 +61,7 @@ func NewRealtimeRecorderWithNotifier(notifier notification.Notifier) (*RealtimeR
 		partialChan:  make(chan string, 50),
 		completeChan: make(chan string, 10),
 		errorChan:    make(chan error, 10),
-		levelChan:    make(chan float64, 16),
-		agcGain:      3.0,
-		agcEnv:       0.0,
+		level:        NewLevelProcessor(),
 		ctx:          ctx,
 		cancel:       cancel,
 	}, nil
@@ -165,9 +159,9 @@ func (rr *RealtimeRecorder) ErrorChan() <-chan error {
 	return rr.errorChan
 }
 
-// LevelChan returns channel for audio levels (same as regular recorder)
+// LevelChan returns channel for audio levels
 func (rr *RealtimeRecorder) LevelChan() <-chan float64 {
-	return rr.levelChan
+	return rr.level.LevelChan
 }
 
 // recordAndStream captures audio and streams it to OpenAI WebSocket
@@ -198,8 +192,8 @@ func (rr *RealtimeRecorder) recordAndStream() {
 			// Add to buffer
 			audioBuffer = append(audioBuffer, inputBuffer...)
 
-			// Process audio levels (same logic as regular recorder)
-			rr.processInputLevel(inputBuffer)
+			// Process audio levels
+			rr.level.Process(inputBuffer)
 
 			// Send chunk when we have enough data
 			if len(audioBuffer) >= audioChunkBytes {
@@ -255,107 +249,5 @@ func (rr *RealtimeRecorder) forwardTranscripts() {
 				// Drop if channel is full
 			}
 		}
-	}
-}
-
-// processInputLevel reuses the same AGC logic from the regular recorder
-func (rr *RealtimeRecorder) processInputLevel(inputBuffer []byte) {
-	if len(inputBuffer) == 0 {
-		return
-	}
-
-	// Find max absolute sample in this buffer
-	sampleCount := len(inputBuffer) / 2
-	if sampleCount == 0 {
-		return
-	}
-
-	var maxSample float64
-	for i := 0; i < sampleCount; i++ {
-		s := int16(inputBuffer[2*i]) | int16(inputBuffer[2*i+1])<<8
-		absValue := float64(abs(int32(s)))
-		if absValue > maxSample {
-			maxSample = absValue
-		}
-	}
-
-	// Same AGC logic as regular recorder
-	attackMs := agcAttackMs
-	releaseMs := agcReleaseMs
-	if agcEnvelopeSizeMs > 0 {
-		attackMs = agcEnvelopeSizeMs
-		releaseMs = agcEnvelopeSizeMs
-	}
-
-	// Calculate coefficients (same formula as regular recorder)
-	attackCoeff := 1.0 - (1.0 / ((attackMs / 1000.0) * float64(realtimeSampleRate)))
-	releaseCoeff := 1.0 - (1.0 / ((releaseMs / 1000.0) * float64(realtimeSampleRate)))
-
-	if attackCoeff < 0 {
-		attackCoeff = 0
-	}
-	if releaseCoeff < 0 {
-		releaseCoeff = 0
-	}
-
-	peak := maxSample / 32768.0
-	if peak < 0 {
-		peak = 0
-	} else if peak > 1 {
-		peak = 1
-	}
-
-	// Update envelope
-	if peak > rr.agcEnv {
-		rr.agcEnv = attackCoeff*rr.agcEnv + (1-attackCoeff)*peak
-	} else {
-		rr.agcEnv = releaseCoeff*rr.agcEnv + (1-releaseCoeff)*peak
-	}
-
-	// Calculate gain and final level (same logic as regular recorder)
-	desiredGain := 1.0
-	if rr.agcEnv > 0 {
-		desiredGain = agcTarget / rr.agcEnv
-	}
-	if desiredGain > agcMaxGain {
-		desiredGain = agcMaxGain
-	} else if desiredGain < agcMinGain {
-		desiredGain = agcMinGain
-	}
-
-	// Smooth gain changes
-	if desiredGain > rr.agcGain {
-		rr.agcGain = rr.agcGain + agcGainAttack*(desiredGain-rr.agcGain)
-	} else {
-		rr.agcGain = rr.agcGain + agcGainRelease*(desiredGain-rr.agcGain)
-	}
-
-	// Apply gain and emit level
-	adjusted := peak * rr.agcGain
-	if adjusted > 1 {
-		adjusted = 1
-	}
-
-	level := 0.0
-	if adjusted >= agcNoiseGate {
-		// Same logarithmic mapping as regular recorder
-		level = 0.5 * (1.0 + adjusted) * uiMaxLevel * agcVisualBoost
-		if level > uiMaxLevel {
-			level = uiMaxLevel
-		}
-	}
-
-	// Throttle emits (same as regular recorder)
-	now := time.Now()
-	if now.Sub(rr.lastLevelEmit) < throttleIntervalMs*time.Millisecond {
-		return
-	}
-	rr.lastLevelEmit = now
-
-	// Non-blocking send
-	select {
-	case rr.levelChan <- level:
-	default:
-		// drop if channel is full
 	}
 }

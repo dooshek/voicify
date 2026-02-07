@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,34 +19,8 @@ import (
 )
 
 const (
-	sampleRate         = 16000
-	channels           = 1
-	throttleIntervalMs = 40 // Should be synchronized with @extension.js LEVEL_UPDATE_INTERVAL_MS to get best visual effect
-
-	// --- Automatic Gain Control (AGC) configuration ---
-	// agcAttackMs: Envelope attack time (ms). Mniejsze = szybciej reaguje na wzrosty (bardziej "żywe").
-	// agcReleaseMs: Envelope release time (ms). Większe = wolniejszy opad (stabilniejsza kreska).
-	// agcTarget: Docelowy poziom envelope po wzmocnieniu (skala 0..~1 przed logarytmicznym mapowaniem).
-	// agcMaxGain: Maksymalne wzmocnienie (x). Podnosi szept, ale za duże może klipować wizualizację.
-	// agcMinGain: Minimalne wzmocnienie (x). Zapobiega zbyt niskiemu poziomowi przy głośnym sygnale.
-	// agcGainAttack: Szybkość narastania GAIN (0..1). Większe = szybciej podbija ciche fragmenty.
-	// agcGainRelease: Szybkość opadania GAIN (0..1). Większe = szybciej zmniejsza gain po głośnym sygnale.
-	// agcNoiseGate: Próg bramki szumów dla WYJŚCIA (nie zeruje envelope). Poniżej progu nie rysujemy kreski.
-	// agcVisualBoost: Dodatkowy mnożnik na wyjściu (tylko do wizualizacji, nie wpływa na gain).
-	// uiMaxLevel: Maksymalny poziom dla UI (docinamy do tej wartości po skali logarytmicznej).
-	agcAttackMs  = 30.0  // ms
-	agcReleaseMs = 100.0 // ms
-	// agcEnvelopeSizeMs: Jeśli > 0, użyj tej samej wartości (ms) dla attack i release
-	// przy obliczaniu obwiedni. 0 oznacza wyłączone (używane są osobne agcAttackMs/agcReleaseMs).
-	agcEnvelopeSizeMs = 0.0
-	agcTarget         = 1.0
-	agcMaxGain        = 3.0
-	agcMinGain        = 0.05
-	agcGainAttack     = 0.03
-	agcGainRelease    = 0.02
-	agcNoiseGate      = 0.1
-	agcVisualBoost    = 1.0
-	uiMaxLevel        = 1.0
+	sampleRate = 16000
+	channels   = 1
 )
 
 var ErrFFmpegNotInstalled = fmt.Errorf("FFmpeg is not installed. Please install FFmpeg to use voice recording functionality")
@@ -73,11 +46,7 @@ type Recorder struct {
 	fileOps            fileops.FileOps
 	resultChan         chan recordingResult
 	// Live input level streaming
-	levelChan     chan float64
-	lastLevelEmit time.Time
-	// AGC state (peak-based)
-	agcGain float64
-	agcEnv  float64
+	level *LevelProcessor
 }
 
 type recordingResult struct {
@@ -116,9 +85,7 @@ func NewRecorderWithNotifier(notifier notification.Notifier) (*Recorder, error) 
 		notifier:    notifier,
 		fileOps:     fileOps,
 		resultChan:  make(chan recordingResult, 1),
-		levelChan:   make(chan float64, 16),
-		agcGain:     1.0,
-		agcEnv:      0.0,
+		level:       NewLevelProcessor(),
 	}, nil
 }
 
@@ -134,8 +101,6 @@ func (r *Recorder) Start() {
 	r.isRecording = true
 	r.cancelled = false
 	r.recordingStartTime = time.Now()
-	// Reset metering state
-	r.lastLevelEmit = time.Time{}
 	go r.record()
 	go r.updateRecordingTime()
 
@@ -196,8 +161,8 @@ func (r *Recorder) record() {
 			}
 			audioBuffer.Write(inputBuffer)
 
-			// Compute and emit input level (RMS with EMA + simple AGC)
-			r.processInputLevel(inputBuffer)
+			// Compute and emit input level
+			r.level.Process(inputBuffer)
 		},
 	})
 	if err != nil {
@@ -321,119 +286,8 @@ func convertPCMToWAV(pcmData []byte, channels int, sampleRate int) ([]byte, erro
 	return buffer.Bytes(), nil
 }
 
-// LevelChan returns a channel with live input level values in range [0, 1.2]
-// Values are emitted roughly every 30-40ms during active recording
+// LevelChan returns a channel with live input level values in range [0, 1]
+// Values are emitted roughly every 40ms during active recording
 func (r *Recorder) LevelChan() <-chan float64 {
-	return r.levelChan
-}
-
-// processInputLevel converts raw PCM samples to simple logarithmic level for visualization
-func (r *Recorder) processInputLevel(inputBuffer []byte) {
-	if len(inputBuffer) == 0 {
-		return
-	}
-
-	// Find max absolute sample in this buffer
-	// Samples are int16 little-endian, mono
-	sampleCount := len(inputBuffer) / 2
-	if sampleCount == 0 {
-		return
-	}
-
-	var maxSample float64
-	for i := 0; i < sampleCount; i++ {
-		// Little-endian int16 - correct conversion
-		s := int16(inputBuffer[2*i]) | int16(inputBuffer[2*i+1])<<8
-		absValue := float64(abs(int32(s)))
-		if absValue > maxSample {
-			maxSample = absValue
-		}
-	}
-
-	// Peak envelope follower with attack/release
-	// Typical values: attack ~5-10 ms, release ~80-200 ms at 16kHz
-	attackMs := agcAttackMs
-	releaseMs := agcReleaseMs
-	if agcEnvelopeSizeMs > 0 {
-		attackMs = agcEnvelopeSizeMs
-		releaseMs = agcEnvelopeSizeMs
-	}
-	attackCoeff := math.Exp(-1.0 / ((attackMs / 1000.0) * float64(sampleRate)))
-	releaseCoeff := math.Exp(-1.0 / ((releaseMs / 1000.0) * float64(sampleRate)))
-
-	// Convert max sample to normalized peak [0..1]
-	peak := maxSample / 32768.0
-	if peak < 0 {
-		peak = 0
-	} else if peak > 1 {
-		peak = 1
-	}
-
-	// Update envelope
-	if peak > r.agcEnv {
-		r.agcEnv = attackCoeff*r.agcEnv + (1-attackCoeff)*peak
-	} else {
-		r.agcEnv = releaseCoeff*r.agcEnv + (1-releaseCoeff)*peak
-	}
-
-	// Noise gate threshold for display (apply later on output)
-	gate := agcNoiseGate
-
-	// Target level for envelope after AGC
-	target := agcTarget
-
-	// Compute desired gain with soft clamps
-	desiredGain := 1.0
-	if r.agcEnv > 0 {
-		desiredGain = target / r.agcEnv
-	}
-	if desiredGain > agcMaxGain {
-		desiredGain = agcMaxGain
-	} else if desiredGain < agcMinGain {
-		desiredGain = agcMinGain
-	}
-
-	// Smooth gain changes (separate attack/release for gain to avoid pumping)
-	gainAttack := agcGainAttack
-	gainRelease := agcGainRelease
-	if desiredGain > r.agcGain {
-		r.agcGain = r.agcGain + gainAttack*(desiredGain-r.agcGain)
-	} else {
-		r.agcGain = r.agcGain + gainRelease*(desiredGain-r.agcGain)
-	}
-
-	// Apply gain to current peak and map to log scale for UI
-	adjusted := peak * r.agcGain
-	if adjusted > 1 {
-		adjusted = 1
-	}
-	level := 0.0
-	if adjusted >= gate {
-		level = math.Log10(adjusted*9.0+1.0) * uiMaxLevel * agcVisualBoost
-		if level > uiMaxLevel {
-			level = uiMaxLevel
-		}
-	}
-
-	// Throttle emits
-	now := time.Now()
-	if now.Sub(r.lastLevelEmit) < throttleIntervalMs*time.Millisecond {
-		return
-	}
-	r.lastLevelEmit = now
-
-	// Non-blocking send
-	select {
-	case r.levelChan <- level:
-	default:
-		// drop if channel is full
-	}
-}
-
-// abs returns absolute value of int32
-func abs(x int32) int32 {
-	if x < 0 {
-		return -x
-	}
-	return x
+	return r.level.LevelChan
 }
