@@ -1,51 +1,29 @@
 /* Voicify Extension Styling */
 
-.system-status-icon.recording {
-    color: #ffffff;
-}
-
-.system-status-icon.uploading {
-    color: #3498db;
-}
-
-.system-status-icon.finished {
-    color: #27ae60;
-}
-
-.system-status-icon.canceled {
-    color: #e74c3c;
-}
-
 /* Wave overlay widget */
 .voicify-wave-overlay {
-    background-color: rgba(0, 0, 0, 0.875);
-    border: 1px solid rgba(255, 255, 255, 0.9);
-    border-radius: 30px;
-    box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.7);
-    overflow: hidden;
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
-.voicify-wave-overlay.uploading {
-    background-color: rgba(116, 24, 134, 0.7);
-}
-
-.voicify-wave-overlay.finished {
-    background-color: rgba(24, 134, 83, 0.7);
-}
-
+.voicify-wave-overlay.uploading,
+.voicify-wave-overlay.finished,
 .voicify-wave-overlay.canceled {
-    background-color: rgba(231, 76, 60, 0.7);
+    background-color: transparent;
 }
 
 .voicify-wave-container {
-    margin: 0px 0px 0px 0px;
-    overflow: hidden;
+    background-color: rgba(0, 0, 0, 0.25);
+    border-radius: 30px;
+    padding: 10px 14px;
 }
 
 /* Equalizer bars - JavaScript animates them */
 .voicify-wave-bar {
-    background-color: #ffffff;
-    transform-origin: bottom;
+    background-color: #5ef0da;
     border-radius: 2px;
-    border: 1px solid #ffffff;
+    border: none;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
 }

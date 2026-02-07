@@ -1,10 +1,64 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.voicify" path="/org/gnome/shell/extensions/voicify/">
-    <key name="keyboard-shortcut" type="as">
-      <default>['&lt;Ctrl&gt;&lt;Super&gt;v']</default>
-      <summary>Keyboard shortcut for voice recording</summary>
-      <description>The keyboard shortcut that triggers voice recording start/stop</description>
+    <key name="wave-theme" type="s">
+      <default>'mint-dream'</default>
+      <summary>Waveform visualization theme</summary>
+      <description>Color theme for the waveform visualization bars</description>
+    </key>
+    <key name="wave-size" type="s">
+      <default>'medium'</default>
+      <summary>Waveform visualization size</summary>
+      <description>Size variant for the waveform bars: thin, medium, or large</description>
+    </key>
+    <key name="wave-bg-opacity" type="i">
+      <default>25</default>
+      <summary>Waveform background opacity</summary>
+      <description>Background opacity percentage (0=transparent, 100=opaque)</description>
+      <range min="0" max="100"/>
+    </key>
+    <key name="wave-position" type="s">
+      <default>'bottom-center'</default>
+      <summary>Waveform position on screen</summary>
+      <description>Position of the waveform widget on screen</description>
+    </key>
+    <key name="reaction-time" type="i">
+      <default>10</default>
+      <summary>Level update interval (ms)</summary>
+      <description>How often the waveform bars update in milliseconds</description>
+      <range min="5" max="40"/>
+    </key>
+    <key name="wave-smoothing" type="i">
+      <default>50</default>
+      <summary>Waveform smoothing</summary>
+      <description>How smooth the bar animations are (0=jumpy, 100=very smooth)</description>
+      <range min="0" max="100"/>
+    </key>
+    <key name="wave-sensitivity" type="i">
+      <default>100</default>
+      <summary>Waveform sensitivity</summary>
+      <description>How much the bars react to sound (50=low, 300=very high)</description>
+      <range min="50" max="300"/>
+    </key>
+    <key name="shortcut-cancel" type="s">
+      <default>'&lt;Ctrl&gt;&lt;Super&gt;x'</default>
+      <summary>Cancel recording shortcut</summary>
+      <description>Keyboard shortcut to cancel the current recording</description>
+    </key>
+    <key name="shortcut-realtime" type="s">
+      <default>'&lt;Ctrl&gt;&lt;Super&gt;v'</default>
+      <summary>Realtime recording shortcut</summary>
+      <description>Keyboard shortcut for realtime voice recording</description>
+    </key>
+    <key name="shortcut-post-autopaste" type="s">
+      <default>'&lt;Ctrl&gt;&lt;Super&gt;c'</default>
+      <summary>Post-processing auto-paste shortcut</summary>
+      <description>Keyboard shortcut for post-processing with auto-paste</description>
+    </key>
+    <key name="shortcut-post-router" type="s">
+      <default>'&lt;Ctrl&gt;&lt;Super&gt;d'</default>
+      <summary>Post-processing router shortcut</summary>
+      <description>Keyboard shortcut for post-processing with router</description>
     </key>
   </schema>
 </schemalist>
