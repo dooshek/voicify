@@ -12,6 +12,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { loadDesigns } from './designLoader.js';
+import * as LayerPainter from './layerPainter.js';
 
 // Size variants
 const SIZES = {
@@ -34,8 +35,7 @@ const MIN_SCALE = 0.04;
 
 // Background padding for wave container (matches CSS padding in stylesheet.css)
 const WAVE_H_PAD = 6;
-const WAVE_V_PAD_TOP = 10;
-const WAVE_V_PAD_BOTTOM = 5;
+const WAVE_V_PAD = 6;
 
 // Recording states
 const State = {
@@ -174,6 +174,9 @@ export default class VoicifyExtension extends Extension {
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-size', () => this._applySize())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::wave-type', () => this._applyWaveType())
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-position', () => this._applyPosition())
@@ -419,12 +422,41 @@ export default class VoicifyExtension extends Extension {
         this._updateTrailBarColors();
         this._updatePixelGridColors();
 
-        // Update CSS background (bgWidget for pixelGrid designs, waveContainer otherwise)
+        // Update background widget (theme-aware border etc.)
         if (this._bgWidget) {
-            this._bgWidget.style = this._buildContainerStyle();
-        } else if (this._waveContainer) {
-            this._waveContainer.style = this._buildContainerStyle();
+            if (this._bgIsDrawingArea) {
+                this._bgWidget.queue_repaint();
+            } else {
+                this._bgWidget.style = this._buildContainerStyle();
+            }
         }
+    }
+
+    _applyWaveType() {
+        // Wave type from settings overrides design defaults
+        // Applies live: updates pivot and restarts animation if recording
+        if (this._waveBars && this._state === State.RECORDING) {
+            this._initFlatBars();
+        }
+    }
+
+    _getEffectiveWaveType() {
+        const settingType = this._settings
+            ? this._settings.get_string('wave-type')
+            : 'default';
+        if (settingType !== 'default') return settingType;
+        // Fallback to design defaults
+        const db = this._currentDesign.bars;
+        if (db.waveMode === 'wave') return 'wave';
+        if (db.pivotY === 1.0) return 'bottom';
+        if (db.pivotY === 0.0) return 'top';
+        return 'center';
+    }
+
+    _getEffectiveNumBars() {
+        const { numBars } = this._currentSize;
+        const multiplier = this._currentDesign.bars.numBarsMultiplier || 1;
+        return Math.round(numBars * multiplier);
     }
 
     _applyDesign() {
@@ -432,11 +464,6 @@ export default class VoicifyExtension extends Extension {
             ? this._settings.get_string('wave-design')
             : 'modern';
         this._currentDesign = this._designs.get(designId) || this._designs.values().next().value;
-
-        // Auto-set color theme from design's default
-        if (this._currentDesign.defaultTheme && this._settings && THEMES[this._currentDesign.defaultTheme]) {
-            this._settings.set_string('wave-theme', this._currentDesign.defaultTheme);
-        }
 
         // Rebuild widget if visible
         if (this._waveWidget && this._state === State.RECORDING) {
@@ -467,10 +494,11 @@ export default class VoicifyExtension extends Extension {
             : 'bottom-center';
 
         if (this._waveWidget) {
-            const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
+            const { barWidth, barSpacing, containerHeight } = this._currentSize;
+            const numBars = this._getEffectiveNumBars();
             const effectiveWidth = barWidth + this._currentDesign.bars.widthAdjust;
             const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing + WAVE_H_PAD * 2;
-            const totalHeight = containerHeight + WAVE_V_PAD_TOP + WAVE_V_PAD_BOTTOM;
+            const totalHeight = containerHeight + WAVE_V_PAD * 2;
             this._positionWaveWidget(containerWidth, totalHeight);
         }
     }
@@ -632,12 +660,13 @@ export default class VoicifyExtension extends Extension {
 
     _updatePixelGridColors() {
         if (!this._pixelGridWidget || !this._waveWidget || !this._bgWidget) return;
-        const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
+        const { barWidth, barSpacing, containerHeight } = this._currentSize;
+        const numBars = this._getEffectiveNumBars();
         const db = this._currentDesign.bars;
         const effectiveWidth = barWidth + db.widthAdjust;
         const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing;
         const totalWidth = containerWidth + WAVE_H_PAD * 2;
-        const totalHeight = containerHeight + WAVE_V_PAD_TOP + WAVE_V_PAD_BOTTOM;
+        const totalHeight = containerHeight + WAVE_V_PAD * 2;
         this._destroyPixelGrid();
         this._createPixelGridWidget(totalWidth, totalHeight);
         if (this._pixelGridWidget) {
@@ -1094,14 +1123,15 @@ export default class VoicifyExtension extends Extension {
     _showWaveWidget() {
         if (this._waveWidget) return;
 
-        const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
+        const { barWidth, barSpacing, containerHeight } = this._currentSize;
+        const numBars = this._getEffectiveNumBars();
         const db = this._currentDesign.bars;
         const dc = this._currentDesign.container;
         const effectiveWidth = barWidth + db.widthAdjust;
         const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing;
         const barHeight = (containerHeight / 2) + 1;
         const totalWidth = containerWidth + WAVE_H_PAD * 2;
-        const totalHeight = containerHeight + WAVE_V_PAD_TOP + WAVE_V_PAD_BOTTOM;
+        const totalHeight = containerHeight + WAVE_V_PAD * 2;
 
         // Create blur background layer (separate chrome, behind wave widget)
         if (dc.blur) {
@@ -1135,19 +1165,36 @@ export default class VoicifyExtension extends Extension {
             visible: true,
         });
 
-        // Check if design has pixelGrid layer
-        const hasPixelGrid = (this._currentDesign.layers || []).some(l => l.type === 'pixelGrid');
+        // Background widget: St.DrawingArea for Cairo layers, or St.Widget with CSS
+        const hasAdvancedLayers = (this._currentDesign.layers || []).some(
+            l => ['innerHighlight', 'specularHighlight', 'innerShadow'].includes(l.type)
+        );
 
-        if (hasPixelGrid) {
-            // Layer stack: bgWidget -> pixelGrid -> waveContainer(transparent)
+        if (hasAdvancedLayers) {
+            this._bgWidget = new St.DrawingArea({
+                reactive: false,
+            });
+            this._bgWidget.set_size(totalWidth, totalHeight);
+            this._bgWidget.connect('repaint', (area) => {
+                const cr = area.get_context();
+                LayerPainter.drawAllCanvasLayers(cr, this._currentDesign, this._currentTheme, totalWidth, totalHeight);
+                cr.$dispose();
+            });
+            this._bgIsDrawingArea = true;
+        } else {
             this._bgWidget = new St.Widget({
                 style: this._buildContainerStyle(),
                 reactive: false,
                 can_focus: false,
             });
             this._bgWidget.set_size(totalWidth, totalHeight);
-            this._waveWidget.add_child(this._bgWidget);
+            this._bgIsDrawingArea = false;
+        }
+        this._waveWidget.add_child(this._bgWidget);
 
+        // Pixel grid overlay (retro design)
+        const hasPixelGrid = (this._currentDesign.layers || []).some(l => l.type === 'pixelGrid');
+        if (hasPixelGrid) {
             this._createPixelGridWidget(totalWidth, totalHeight);
             if (this._pixelGridWidget) {
                 this._waveWidget.add_child(this._pixelGridWidget);
@@ -1156,7 +1203,7 @@ export default class VoicifyExtension extends Extension {
 
         this._waveContainer = new St.BoxLayout({
             style_class: 'voicify-wave-container',
-            style: hasPixelGrid ? `border-radius: ${dc.borderRadius}px;` : this._buildContainerStyle(),
+            style: `border-radius: ${dc.borderRadius}px;`,
             vertical: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
@@ -1324,8 +1371,15 @@ export default class VoicifyExtension extends Extension {
             this._waveWidget = null;
             this._waveContainer = null;
             this._bgWidget = null;
+            this._bgIsDrawingArea = false;
             this._waveBars = null;
         }
+    }
+
+    _destroyCanvasBackground() {
+        // bgWidget is a child of waveWidget, destroyed with it
+        // but clear reference for safety
+        this._bgWidget = null;
     }
 
     _destroyBlur() {
@@ -1574,7 +1628,11 @@ export default class VoicifyExtension extends Extension {
         if (!this._waveBars) return;
         this._currentLevel = 0;
         this._trailLevel = 0;
-        const pivotY = this._currentDesign.bars.pivotY;
+        this._wavePhase = 0;
+        const waveType = this._getEffectiveWaveType();
+        const pivotY = waveType === 'bottom' ? 1.0
+                     : waveType === 'top' ? 0.0
+                     : 0.5;
         const scaleMin = this._currentDesign.bars.scaleMin;
         this._waveBars.forEach(bar => {
             bar.set_pivot_point(0.5, pivotY);
@@ -1613,12 +1671,26 @@ export default class VoicifyExtension extends Extension {
             const level = this._currentLevel;
             const center = (n - 1) / 2;
             const db = this._currentDesign.bars;
+            const waveType = this._getEffectiveWaveType();
 
-            for (let i = 0; i < n; i++) {
-                const dist = Math.abs(i - center) / center;
-                const envelope = Math.exp(-dist * dist * 3);
-                const val = level * envelope;
-                this._waveBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+            if (waveType === 'wave') {
+                // Propagating wave: per-bar phase offset, left-to-right
+                const waveSpeed = db.waveSpeed || 0.15;
+                this._wavePhase += waveSpeed;
+                for (let i = 0; i < n; i++) {
+                    const barPhase = this._wavePhase + (i / (n - 1)) * Math.PI * 2;
+                    const waveValue = 0.5 + 0.5 * Math.sin(barPhase);
+                    const val = level * waveValue;
+                    this._waveBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+                }
+            } else {
+                // Default "level" mode: Gaussian envelope from center
+                for (let i = 0; i < n; i++) {
+                    const dist = Math.abs(i - center) / center;
+                    const envelope = Math.exp(-dist * dist * 3);
+                    const val = level * envelope;
+                    this._waveBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+                }
             }
 
             // Update trail bars (peak-hold with slow decay)
@@ -1631,10 +1703,17 @@ export default class VoicifyExtension extends Extension {
                 }
 
                 for (let i = 0; i < n; i++) {
-                    const dist = Math.abs(i - center) / center;
-                    const envelope = Math.exp(-dist * dist * 3);
-                    const val = this._trailLevel * envelope;
-                    this._trailBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+                    if (waveType === 'wave') {
+                        const barPhase = this._wavePhase + (i / (n - 1)) * Math.PI * 2;
+                        const waveValue = 0.5 + 0.5 * Math.sin(barPhase);
+                        const val = this._trailLevel * waveValue;
+                        this._trailBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+                    } else {
+                        const dist = Math.abs(i - center) / center;
+                        const envelope = Math.exp(-dist * dist * 3);
+                        const val = this._trailLevel * envelope;
+                        this._trailBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+                    }
                 }
             }
 

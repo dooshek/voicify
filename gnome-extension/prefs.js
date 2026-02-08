@@ -136,6 +136,33 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         const currentSizeIdx = SIZE_IDS.indexOf(currentSizeId);
         if (currentSizeIdx >= 0) sizeRow.set_selected(currentSizeIdx);
 
+        // --- Wave type ---
+        const WAVE_TYPES = ['default', 'bottom', 'center', 'top', 'wave'];
+        const WAVE_TYPE_LABELS = ['Default (design)', 'From Bottom', 'From Center', 'From Top', 'Wave (propagating)'];
+
+        const waveTypeModel = new Gtk.StringList();
+        for (const label of WAVE_TYPE_LABELS) {
+            waveTypeModel.append(label);
+        }
+
+        const waveTypeRow = new Adw.ComboRow({
+            title: 'Wave Type',
+            subtitle: 'Animation direction for the bars',
+            model: waveTypeModel,
+        });
+
+        const currentWaveType = settings.get_string('wave-type');
+        const currentWaveTypeIdx = WAVE_TYPES.indexOf(currentWaveType);
+        if (currentWaveTypeIdx >= 0) waveTypeRow.set_selected(currentWaveTypeIdx);
+
+        waveTypeRow.connect('notify::selected', () => {
+            const idx = waveTypeRow.get_selected();
+            if (idx >= 0 && idx < WAVE_TYPES.length) {
+                settings.set_string('wave-type', WAVE_TYPES[idx]);
+                previewArea.queue_draw();
+            }
+        });
+
         // --- Theme preview (Cairo animated) ---
         const previewRow = new Adw.ActionRow({
             title: 'Preview',
@@ -365,6 +392,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
             }
         });
         sizeGroup.add(sizeRow);
+        sizeGroup.add(waveTypeRow);
 
         // --- Responsiveness group ---
         const responsivenessGroup = new Adw.PreferencesGroup({

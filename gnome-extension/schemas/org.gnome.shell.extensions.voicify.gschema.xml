@@ -16,6 +16,11 @@
       <summary>Waveform visualization size</summary>
       <description>Size variant for the waveform bars: thin, medium, or large</description>
     </key>
+    <key name="wave-type" type="s">
+      <default>'default'</default>
+      <summary>Wave animation type</summary>
+      <description>How the waveform bars animate: default (use design setting), bottom (grow from bottom), center (grow from center), top (grow from top), wave (propagating left-to-right)</description>
+    </key>
     <key name="wave-bg-opacity" type="i">
       <default>25</default>
       <summary>Waveform background opacity (legacy)</summary>

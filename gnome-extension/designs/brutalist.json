@@ -13,6 +13,8 @@
         "opacityMode": "uniform",
         "opacityUniform": 255,
         "pivotY": 0.5,
+        "waveMode": "wave",
+        "waveSpeed": 0.15,
         "scaleMin": 0.04,
         "scaleMax": 1.0,
         "glowFromTheme": false,
