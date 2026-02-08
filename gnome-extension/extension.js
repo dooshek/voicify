@@ -33,8 +33,9 @@ const MAX_SCALE = 1.0;
 const MIN_SCALE = 0.04;
 
 // Background padding for wave container (matches CSS padding in stylesheet.css)
-const WAVE_H_PAD = 14;
-const WAVE_V_PAD = 10;
+const WAVE_H_PAD = 6;
+const WAVE_V_PAD_TOP = 10;
+const WAVE_V_PAD_BOTTOM = 5;
 
 // Recording states
 const State = {
@@ -130,6 +131,7 @@ export default class VoicifyExtension extends Extension {
         this._isRealtimeMode = false;
         this._isPostAutoPaste = false;
         this._isPostRouter = false;
+        this._pendingPaste = false;
         this._debounceMs = 500;
         this._virtualKeyboard = null;
         this._settingsChangedIds = [];
@@ -415,9 +417,12 @@ export default class VoicifyExtension extends Extension {
         this._currentTheme = THEMES[themeId] || THEMES['mint-dream'];
         this._updateBarColors();
         this._updateTrailBarColors();
+        this._updatePixelGridColors();
 
-        // Update CSS background
-        if (this._waveContainer) {
+        // Update CSS background (bgWidget for pixelGrid designs, waveContainer otherwise)
+        if (this._bgWidget) {
+            this._bgWidget.style = this._buildContainerStyle();
+        } else if (this._waveContainer) {
             this._waveContainer.style = this._buildContainerStyle();
         }
     }
@@ -465,7 +470,7 @@ export default class VoicifyExtension extends Extension {
             const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
             const effectiveWidth = barWidth + this._currentDesign.bars.widthAdjust;
             const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing + WAVE_H_PAD * 2;
-            const totalHeight = containerHeight + WAVE_V_PAD * 2;
+            const totalHeight = containerHeight + WAVE_V_PAD_TOP + WAVE_V_PAD_BOTTOM;
             this._positionWaveWidget(containerWidth, totalHeight);
         }
     }
@@ -519,6 +524,32 @@ export default class VoicifyExtension extends Extension {
         const alpha = dc.bgOpacity ?? 0.25;
         let style = `background-color: rgba(${cr}, ${cg}, ${cb}, ${alpha.toFixed(2)});`;
         style += ` border-radius: ${dc.borderRadius}px;`;
+
+        // Add shadow and border from design layers
+        const layers = this._currentDesign.layers || [];
+        for (const layer of layers) {
+            if (layer.type === 'shadow') {
+                const [sr, sg, sb] = layer.color || [0, 0, 0];
+                const sa = layer.alpha || 0.3;
+                const blur = layer.blur || 8;
+                const ox = layer.x || 0;
+                const oy = layer.y || 0;
+                style += ` box-shadow: ${ox}px ${oy}px ${blur}px rgba(${sr},${sg},${sb},${sa});`;
+            } else if (layer.type === 'border') {
+                const bw = layer.width || 1;
+                const ba = layer.alpha || 0.3;
+                let br, bg, bb;
+                if (layer.source === 'theme' && this._currentTheme) {
+                    br = this._currentTheme.center.r;
+                    bg = this._currentTheme.center.g;
+                    bb = this._currentTheme.center.b;
+                } else {
+                    [br, bg, bb] = layer.color || [255, 255, 255];
+                }
+                style += ` border: ${bw}px solid rgba(${br},${bg},${bb},${ba});`;
+            }
+        }
+
         return style;
     }
 
@@ -596,6 +627,21 @@ export default class VoicifyExtension extends Extension {
         if (this._pixelGridWidget) {
             this._pixelGridWidget.destroy();
             this._pixelGridWidget = null;
+        }
+    }
+
+    _updatePixelGridColors() {
+        if (!this._pixelGridWidget || !this._waveWidget || !this._bgWidget) return;
+        const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
+        const db = this._currentDesign.bars;
+        const effectiveWidth = barWidth + db.widthAdjust;
+        const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing;
+        const totalWidth = containerWidth + WAVE_H_PAD * 2;
+        const totalHeight = containerHeight + WAVE_V_PAD_TOP + WAVE_V_PAD_BOTTOM;
+        this._destroyPixelGrid();
+        this._createPixelGridWidget(totalWidth, totalHeight);
+        if (this._pixelGridWidget) {
+            this._waveWidget.insert_child_above(this._pixelGridWidget, this._bgWidget);
         }
     }
 
@@ -961,10 +1007,10 @@ export default class VoicifyExtension extends Extension {
             this._updateIndicator();
             this._startFinishedAnimation();
         } else if (this._isPostAutoPaste) {
-            this._performAutoPaste();
             this._state = State.FINISHED;
             this._isPostAutoPaste = false;
             this._updateIndicator();
+            this._pendingPaste = true;
             this._startFinishedAnimation();
         }
     }
@@ -1055,7 +1101,7 @@ export default class VoicifyExtension extends Extension {
         const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing;
         const barHeight = (containerHeight / 2) + 1;
         const totalWidth = containerWidth + WAVE_H_PAD * 2;
-        const totalHeight = containerHeight + WAVE_V_PAD * 2;
+        const totalHeight = containerHeight + WAVE_V_PAD_TOP + WAVE_V_PAD_BOTTOM;
 
         // Create blur background layer (separate chrome, behind wave widget)
         if (dc.blur) {
@@ -1676,23 +1722,42 @@ export default class VoicifyExtension extends Extension {
 
         const startScales = this._waveBars.map(bar => bar.scale_y);
         let phase = 0;
-        const totalFrames = 15;
+        const barFrames = 17;
+        const fadeFrames = 8;
+        const totalFrames = barFrames + fadeFrames;
 
         this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
-            if (!this._waveBars) {
+            if (!this._waveWidget) {
                 this._finishedTimer = null;
                 return GLib.SOURCE_REMOVE;
             }
 
             phase++;
-            const progress = phase / totalFrames;
 
-            for (let i = 0; i < this._waveBars.length; i++) {
-                this._waveBars[i].scale_y = Math.max(0.01, startScales[i] * (1 - progress));
+            if (phase <= barFrames) {
+                // Phase 1: bars scale down
+                if (this._waveBars) {
+                    const progress = phase / barFrames;
+                    for (let i = 0; i < this._waveBars.length; i++) {
+                        this._waveBars[i].scale_y = Math.max(0.01, startScales[i] * (1 - progress));
+                    }
+                }
+            } else {
+                // Phase 2: whole box fades out with opacity
+                const fadeProgress = (phase - barFrames) / fadeFrames;
+                this._waveWidget.opacity = Math.round(255 * (1 - fadeProgress));
+                if (this._blurWidget) {
+                    this._blurWidget.opacity = Math.round(255 * (1 - fadeProgress));
+                }
             }
 
             if (phase >= totalFrames) {
                 this._finishedTimer = null;
+                // Paste before hiding (timer cleanup won't cancel it)
+                if (this._pendingPaste) {
+                    this._pendingPaste = false;
+                    this._performAutoPaste();
+                }
                 this._state = State.IDLE;
                 this._updateIndicator();
                 this._hideWaveWidget();

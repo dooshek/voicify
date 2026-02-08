@@ -4,7 +4,7 @@
     "defaultTheme": "phosphor",
     "uploadHueShift": -67,
     "container": {
-        "borderRadius": 4,
+        "borderRadius": 8,
         "bgColor": [2, 8, 3],
         "bgOpacity": 0.92
     },
@@ -25,9 +25,9 @@
         "colorOverride": null
     },
     "layers": [
-        {"type": "shadow", "x": 0, "y": 4, "blur": 16, "color": [0, 0, 0], "alpha": 0.7},
-        {"type": "border", "width": 2, "source": "theme", "alpha": 0.5},
+        {"type": "shadow", "x": 0, "y": 0, "blur": 24, "color": [0, 0, 0], "alpha": 0.3},
+        {"type": "border", "width": 2, "source": "theme", "alpha": 0.3},
         {"type": "pixelGrid", "position": "background", "colorSource": "theme", "alpha": 0.12},
-        {"type": "scanlines", "lineHeight": 1, "lineSpacing": 3, "color": [0, 0, 0], "alpha": 0.15, "borderRadius": 4}
+        {"type": "scanlines", "lineHeight": 1, "lineSpacing": 3, "color": [0, 0, 0], "alpha": 0.15, "borderRadius": 8}
     ]
 }

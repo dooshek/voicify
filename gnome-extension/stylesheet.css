@@ -15,7 +15,7 @@
 }
 
 .voicify-wave-container {
-    padding: 10px 14px;
+    padding: 10px 6px 5px 6px;
 }
 
 /* Equalizer bars - JavaScript animates them, inline styles override */
