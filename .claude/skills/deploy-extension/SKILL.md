@@ -20,4 +20,4 @@ gdbus call --session --dest=org.gnome.Shell --object-path=/org/gnome/Shell --met
 Raportuj:
 - Status rozszerzenia (ACTIVE/ERROR) i daemon (running/dead) z outputu skryptu
 - Ewentualne błędy
-- **Wayland**: poinformuj że zmiany JS wymagają **logout/login**
+- NIE pierdol o Waylandzie/X11 - deploy.sh sam to obsługuje

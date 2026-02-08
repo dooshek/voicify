@@ -56,6 +56,30 @@
       <description>How much the bars react to sound (50=low, 300=very high)</description>
       <range min="50" max="300"/>
     </key>
+    <key name="wave-width" type="i">
+      <default>100</default>
+      <summary>Waveform width percentage</summary>
+      <description>Width of the waveform widget as percentage of base (50-500%)</description>
+      <range min="50" max="500"/>
+    </key>
+    <key name="wave-height" type="i">
+      <default>100</default>
+      <summary>Waveform height percentage</summary>
+      <description>Height of the waveform widget as percentage of base (50-500%)</description>
+      <range min="50" max="500"/>
+    </key>
+    <key name="wave-pos-x" type="d">
+      <default>0.5</default>
+      <summary>Waveform X position</summary>
+      <description>Horizontal position as fraction of usable screen width (0.0=left, 1.0=right)</description>
+      <range min="0.0" max="1.0"/>
+    </key>
+    <key name="wave-pos-y" type="d">
+      <default>1.0</default>
+      <summary>Waveform Y position</summary>
+      <description>Vertical position as fraction of usable screen height (0.0=top, 1.0=bottom)</description>
+      <range min="0.0" max="1.0"/>
+    </key>
     <key name="shortcut-cancel" type="s">
       <default>'&lt;Ctrl&gt;&lt;Super&gt;x'</default>
       <summary>Cancel recording shortcut</summary>

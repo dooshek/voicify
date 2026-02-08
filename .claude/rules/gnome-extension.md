@@ -162,21 +162,122 @@ journalctl --user -u gnome-shell -f | grep -i voicify
 # Wayland: logout/login (jedyny sposób)
 ```
 
+## Reload na Wayland vs X11
+
+- **X11**: `gnome-shell --replace &` przeładowuje JS w pełni. Po restarcie `gnome-extensions enable`.
+- **Wayland**: `disable/enable` **NIE** przeładowuje JS (GJS cachuje ES modules). Tylko CSS się odświeża. Zmiany JS wymagają **logout/login**.
+- `Shell.Eval` zablokowany w GNOME 49 - `Meta.restart()` via D-Bus nie działa.
+- Nested session (`dbus-run-session -- gnome-shell --nested --wayland`) działa, ale daemon nie startuje (wykrywa istniejącą instancję).
+
+## Shell.BlurEffect (GNOME 49)
+
+Właściwości: `radius`, `brightness`, `mode`, `enabled`.
+
+```javascript
+// KRYTYCZNE: bez mode: BACKGROUND blur nic nie robi (domyślnie bluruje aktora, nie tło)
+const blurEffect = new Shell.BlurEffect({
+    brightness: 0.85,
+    mode: Shell.BlurMode.BACKGROUND,  // WYMAGANE dla frosted glass
+});
+blurEffect.set_radius(40);  // użyj set_radius(), nie .radius =
+widget.add_effect_with_name('blur', blurEffect);
+
+// Cleanup w disable():
+const effect = widget.get_effect('blur');
+if (effect) widget.remove_effect(effect);
+widget.destroy();
+```
+
+- **KRYTYCZNE: Shell.BlurEffect jest ZAWSZE prostokątny** - nie da się go obciąć do border-radius
+  - Próbowano: osobne chrome, child waveWidget, inset, background-color hack - nic nie działa
+  - Rectangular blur corners są zawsze widoczne na rounded designs
+  - **Rozwiązanie: NIE używaj Shell.BlurEffect na zaokrąglonych widgetach** - symuluj frosted glass z wyższym bgOpacity + Cairo layers
+- Jeśli kiedyś blur z border-radius będzie potrzebny, wymaga custom shader (C, nie GJS)
+
+## Cairo w GJS ES modules
+
+**Problem**: `imports.cairo` może nie działać w strict ES module context. `import Cairo from 'cairo'` - nieweryfikowalne bez runtime GNOME Shell.
+
+**Rozwiązanie**: Zamiast Cairo patterns (LinearGradient, RadialGradient), używaj strip-based rendering:
+
+```javascript
+// Gradient border - clipowane paski z różnym alpha
+const steps = 12;
+for (let s = 0; s < steps; s++) {
+    const t = s / (steps - 1);
+    const a = alphaTop + (alphaBottom - alphaTop) * t;
+    cr.save();
+    cr.rectangle(x - bw, y + (h * s / steps), w + 2 * bw, h / steps + 1);
+    cr.clip();
+    cr.setSourceRGBA(r, g, b, a);
+    cairoRoundedRect(cr, x + bw/2, y + bw/2, w - bw, h - bw, radius);
+    cr.stroke();
+    cr.restore();
+}
+```
+
+- `cr` z `St.DrawingArea.get_context()` - standardowy Cairo context
+- `cr.$dispose()` po użyciu!
+- St.DrawingArea jest domyślnie przezroczyste - rysuje tylko to co Cairo narysuje
+- `cairoRoundedRect()` helper w `layerPainter.js` - arc-based rounded rect
+
+## St.DrawingArea - obcinanie Cairo rendering
+
+**KRYTYCZNE**: St.DrawingArea obcina Cairo rendering do swojej alokacji (set_size). Jeśli rysujesz shadow/glow POZA granicami widgetu, zostanie obcięty do prostokąta → widoczne prostokątne rogi.
+
+**Rozwiązanie**: Powiększ DrawingArea o padding na shadow i offsetuj rysowanie:
+
+```javascript
+// Oblicz padding z warstw shadow w designie
+const shadowLayers = design.layers.filter(l => l.type === 'shadow');
+let shadowPad = 0;
+for (const sl of shadowLayers) {
+    shadowPad = Math.max(shadowPad, (sl.blur || 8) + Math.abs(sl.x || 0),
+                                     (sl.blur || 8) + Math.abs(sl.y || 0));
+}
+
+bgWidget.set_size(totalWidth + shadowPad * 2, totalHeight + shadowPad * 2);
+bgWidget.set_position(-shadowPad, -shadowPad);
+
+// Rysuj z offsetem (shadow ma miejsce na zanikanie)
+LayerPainter.drawAllCanvasLayersAt(cr, design, theme,
+    shadowPad, shadowPad, totalWidth, totalHeight);
+```
+
+- Inne widgety (bary, blur, pixelGrid) zostają na `totalWidth x totalHeight` i pozycji (0, 0)
+- Rodzic (St.Widget) NIE ma `clip_to_allocation` → children mogą overflow
+
 ## Clutter.Canvas - pułapki
 
 - **NIGDY** nie twórz drugiego `Clutter.Canvas` + `Clutter.Actor` obok istniejącego bgCanvas
   - Powoduje cichy crash w `addChrome()` - widget nie pojawi się, bez error w logach
   - Rozwiązanie: rysuj dodatkowe efekty (np. pixelGrid) w draw handlerze wspólnego bgCanvas
-  - Wzorzec: `_drawPixelGridOnCanvas(cr, layer, w, h)` wywoływane z bgCanvas draw callback
 - `canvas.invalidate()` może wywołać draw handler synchronicznie - exception propaguje się do callera
 - `cr.setOperator(1)` = `Cairo.Operator.SOURCE` - OK w GJS/GNOME Shell
 - Owijaj `_createDecorations()` w try/catch - safety net dla widget layer errors
+
+## Design System - architektura warstw
+
+Designy: `gnome-extension/designs/*.json` z `layers[]` array.
+
+Dwa typy warstw:
+- **Canvas layers** (rysowane Cairo w `layerPainter.js`): shadow, border, innerHighlight, specularHighlight, innerShadow
+- **Widget layers** (St.Widget w `extension.js _createDecorations()`): scanlines, frame, highlightStrip, pixelGrid
+
+Kolejność renderingu w `_showWaveWidget()`:
+1. `_blurWidget` (osobne chrome, pod spodem) - frosted glass
+2. `_bgWidget` (St.DrawingArea) - Cairo canvas layers + tło
+3. `_pixelGridWidget` (St.Widget z clip_to_allocation)
+4. `_trailContainer` (shadow bars)
+5. `_waveContainer` (główne bary wizualizacji)
+6. Decoration widgets (scanlines, frame, etc.)
 
 ## Screenshotowanie do testów
 
 - D-Bus `org.gnome.Shell.Screenshot.Screenshot` jest **zablokowany** (permission denied)
 - Użyj ImageMagick: `import -window root output.png`
-- Crop + zoom: `magick input.png -gravity South -crop 400x60+0+40 +repage -resize 400% output.png`
+- Użytkownik robi screenshoty GNOME → `tmp/screenshots/` (symlink do `~/Pictures/Screenshots/`)
+- Skill `/check-screenshot` - otwórz ostatnie screenshoty i oceń wizualnie
 
 ## Troubleshooting
 
@@ -184,8 +285,4 @@ journalctl --user -u gnome-shell -f | grep -i voicify
 2. Przeczytaj DOKŁADNY komunikat błędu - nie zgaduj
 3. Sprawdź numer linii w stack trace
 4. Extension w stanie ERROR -> sprawdź metadata.json, importy, enable/disable cleanup
-5. Extension nie pojawia się na liście -> sprawdź nazwę katalogu = UUID, restartuj shell, lub:
-   ```bash
-   gdbus call --session --dest=org.gnome.Shell --object-path=/org/gnome/Shell \
-       --method=org.gnome.Shell.Eval 'Main.extensionManager.scanExtensions()'
-   ```
+5. Extension nie pojawia się na liście -> sprawdź nazwę katalogu = UUID, restartuj shell

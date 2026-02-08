@@ -5,7 +5,8 @@
     "container": {
         "borderRadius": 4,
         "bgColor": [0, 0, 0],
-        "bgOpacity": 0.0
+        "bgOpacity": 0.0,
+        "defaultWidth": 200
     },
     "bars": {
         "borderRadius": 1,
@@ -19,7 +20,6 @@
         "glowFromTheme": false,
         "highlight": false,
         "widthAdjust": -1,
-        "numBarsMultiplier": 2,
         "colorMute": 0,
         "colorOverride": null
     },

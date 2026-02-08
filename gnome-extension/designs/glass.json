@@ -5,8 +5,7 @@
     "container": {
         "borderRadius": 40,
         "bgColor": [255, 255, 255],
-        "bgOpacity": 0.12,
-        "blur": {"radius": 40, "brightness": 0.85}
+        "bgOpacity": 0.18
     },
     "bars": {
         "borderRadius": 4,

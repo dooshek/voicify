@@ -147,7 +147,15 @@ export default class VoicifyExtension extends Extension {
         this._trailBars = null;
         this._trailLevel = 0;
         this._trailContainer = null;
-        this._currentPosition = 'bottom-center';
+        this._posX = 0.5;
+        this._posY = 1.0;
+        this._shadowPad = 0;
+        this._widthPct = 100;
+        this._heightPct = 100;
+        this._isDragging = false;
+        this._dragOffsetX = 0;
+        this._dragOffsetY = 0;
+        this._rebuildDebounceTimer = null;
         this._reactionTime = 10;
         this._smoothingAlpha = 0.5;
         this._sensitivityGain = 1.0;
@@ -155,7 +163,8 @@ export default class VoicifyExtension extends Extension {
 
         this._settings = this.getSettings();
 
-        // Apply initial settings
+        // Apply initial settings (isInitializing prevents design from resetting width/height)
+        this._isInitializing = true;
         this._applyTheme();
         this._applyDesign();
         this._applySize();
@@ -164,6 +173,9 @@ export default class VoicifyExtension extends Extension {
         this._applySmoothing();
         this._applySensitivity();
         this._applyModifier();
+        this._applyWidth();
+        this._applyHeight();
+        this._isInitializing = false;
 
         // Connect settings change handlers
         this._settingsChangedIds.push(
@@ -179,7 +191,10 @@ export default class VoicifyExtension extends Extension {
             this._settings.connect('changed::wave-type', () => this._applyWaveType())
         );
         this._settingsChangedIds.push(
-            this._settings.connect('changed::wave-position', () => this._applyPosition())
+            this._settings.connect('changed::wave-pos-x', () => this._applyPosition())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::wave-pos-y', () => this._applyPosition())
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::reaction-time', () => this._applyReactionTime())
@@ -192,6 +207,12 @@ export default class VoicifyExtension extends Extension {
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-modifier', () => this._applyModifier())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::wave-width', () => this._applyWidth())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::wave-height', () => this._applyHeight())
         );
 
         // Shortcut change handlers
@@ -323,6 +344,10 @@ export default class VoicifyExtension extends Extension {
             GLib.Source.remove(this._levelTimer);
             this._levelTimer = null;
         }
+        if (this._rebuildDebounceTimer) {
+            GLib.Source.remove(this._rebuildDebounceTimer);
+            this._rebuildDebounceTimer = null;
+        }
     }
 
     // --- Panel indicator ---
@@ -422,13 +447,9 @@ export default class VoicifyExtension extends Extension {
         this._updateTrailBarColors();
         this._updatePixelGridColors();
 
-        // Update background widget (theme-aware border etc.)
+        // Repaint background (Cairo renders theme-aware border etc.)
         if (this._bgWidget) {
-            if (this._bgIsDrawingArea) {
-                this._bgWidget.queue_repaint();
-            } else {
-                this._bgWidget.style = this._buildContainerStyle();
-            }
+            this._bgWidget.queue_repaint();
         }
     }
 
@@ -455,8 +476,12 @@ export default class VoicifyExtension extends Extension {
 
     _getEffectiveNumBars() {
         const { numBars } = this._currentSize;
-        const multiplier = this._currentDesign.bars.numBarsMultiplier || 1;
-        return Math.round(numBars * multiplier);
+        return Math.round(numBars * (this._widthPct / 100));
+    }
+
+    _getEffectiveContainerHeight() {
+        const { containerHeight } = this._currentSize;
+        return Math.round(containerHeight * (this._heightPct / 100));
     }
 
     _applyDesign() {
@@ -465,11 +490,16 @@ export default class VoicifyExtension extends Extension {
             : 'modern';
         this._currentDesign = this._designs.get(designId) || this._designs.values().next().value;
 
-        // Rebuild widget if visible
+        // Reset width/height to design defaults only when user switches design (not on initial enable)
+        if (!this._isInitializing && this._settings) {
+            const dc = this._currentDesign.container;
+            this._settings.set_int('wave-width', dc.defaultWidth || 100);
+            this._settings.set_int('wave-height', dc.defaultHeight || 100);
+        }
+
+        // Rebuild widget if visible (preserve position)
         if (this._waveWidget && this._state === State.RECORDING) {
-            this._hideWaveWidget();
-            this._showWaveWidget();
-            this._startLevelWave();
+            this._rebuildWaveWidget();
         } else if (this._waveContainer) {
             this._updateBarColors();
         }
@@ -481,21 +511,19 @@ export default class VoicifyExtension extends Extension {
             : 'medium';
         this._currentSize = SIZES[sizeId] || SIZES['medium'];
 
-        if (this._waveWidget && this._state === State.RECORDING) {
-            this._hideWaveWidget();
-            this._showWaveWidget();
-            this._startLevelWave();
-        }
+        this._rebuildWaveWidget();
     }
 
     _applyPosition() {
-        this._currentPosition = this._settings
-            ? this._settings.get_string('wave-position')
-            : 'bottom-center';
+        if (this._settings) {
+            this._posX = this._settings.get_double('wave-pos-x');
+            this._posY = this._settings.get_double('wave-pos-y');
+        }
 
-        if (this._waveWidget) {
-            const { barWidth, barSpacing, containerHeight } = this._currentSize;
+        if (this._waveWidget && !this._isDragging) {
+            const { barWidth, barSpacing } = this._currentSize;
             const numBars = this._getEffectiveNumBars();
+            const containerHeight = this._getEffectiveContainerHeight();
             const effectiveWidth = barWidth + this._currentDesign.bars.widthAdjust;
             const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing + WAVE_H_PAD * 2;
             const totalHeight = containerHeight + WAVE_V_PAD * 2;
@@ -536,54 +564,33 @@ export default class VoicifyExtension extends Extension {
             : 0;
         this._modifier = val / 100;
 
-        // Rebuild widget to add/remove trail bars
+        // Rebuild widget to add/remove trail bars (preserve position)
+        this._rebuildWaveWidget();
+    }
+
+    _applyWidth() {
+        const val = this._settings
+            ? this._settings.get_int('wave-width')
+            : 100;
+        this._widthPct = val;
+
         if (this._waveWidget && this._state === State.RECORDING) {
-            this._hideWaveWidget();
-            this._showWaveWidget();
-            this._startLevelWave();
+            this._debouncedRebuild();
         }
     }
 
-    // --- CSS fallback for container background ---
+    _applyHeight() {
+        const val = this._settings
+            ? this._settings.get_int('wave-height')
+            : 100;
+        this._heightPct = val;
 
-    _buildContainerStyle() {
-        const dc = this._currentDesign.container;
-        const [cr, cg, cb] = dc.bgColor;
-        const alpha = dc.bgOpacity ?? 0.25;
-        let style = `background-color: rgba(${cr}, ${cg}, ${cb}, ${alpha.toFixed(2)});`;
-        style += ` border-radius: ${dc.borderRadius}px;`;
-
-        // Add shadow and border from design layers
-        const layers = this._currentDesign.layers || [];
-        for (const layer of layers) {
-            if (layer.type === 'shadow') {
-                const [sr, sg, sb] = layer.color || [0, 0, 0];
-                const sa = layer.alpha || 0.3;
-                const blur = layer.blur || 8;
-                const ox = layer.x || 0;
-                const oy = layer.y || 0;
-                style += ` box-shadow: ${ox}px ${oy}px ${blur}px rgba(${sr},${sg},${sb},${sa});`;
-            } else if (layer.type === 'border') {
-                const bw = layer.width || 1;
-                const ba = layer.alpha || 0.3;
-                let br, bg, bb;
-                if (layer.source === 'theme' && this._currentTheme) {
-                    br = this._currentTheme.center.r;
-                    bg = this._currentTheme.center.g;
-                    bb = this._currentTheme.center.b;
-                } else {
-                    [br, bg, bb] = layer.color || [255, 255, 255];
-                }
-                style += ` border: ${bw}px solid rgba(${br},${bg},${bb},${ba});`;
-            }
+        if (this._waveWidget && this._state === State.RECORDING) {
+            this._debouncedRebuild();
         }
-
-        return style;
     }
 
-    // --- Canvas-based background (proper alpha at rounded corners) ---
-
-    // Pixel Grid Widget - grid of small St.Widget pixels
+    // --- Pixel Grid Widget - grid of small St.Widget pixels
     // width/height = totalWidth/totalHeight (matches shadow/bg area)
     _createPixelGridWidget(width, height) {
         const pixelGridLayer = (this._currentDesign.layers || []).find(l => l.type === 'pixelGrid');
@@ -660,8 +667,9 @@ export default class VoicifyExtension extends Extension {
 
     _updatePixelGridColors() {
         if (!this._pixelGridWidget || !this._waveWidget || !this._bgWidget) return;
-        const { barWidth, barSpacing, containerHeight } = this._currentSize;
+        const { barWidth, barSpacing } = this._currentSize;
         const numBars = this._getEffectiveNumBars();
+        const containerHeight = this._getEffectiveContainerHeight();
         const db = this._currentDesign.bars;
         const effectiveWidth = barWidth + db.widthAdjust;
         const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing;
@@ -670,6 +678,8 @@ export default class VoicifyExtension extends Extension {
         this._destroyPixelGrid();
         this._createPixelGridWidget(totalWidth, totalHeight);
         if (this._pixelGridWidget) {
+            const sp = this._shadowPad || 0;
+            this._pixelGridWidget.set_position(sp, sp);
             this._waveWidget.insert_child_above(this._pixelGridWidget, this._bgWidget);
         }
     }
@@ -701,7 +711,8 @@ export default class VoicifyExtension extends Extension {
         const { barWidth, barSpacing } = this._currentSize;
         const effectiveWidth = barWidth + db.widthAdjust;
         const barCenter = (this._waveBars.length - 1) / 2;
-        const barHeight = (this._currentSize.containerHeight / 2) + 1;
+        const containerHeight = this._getEffectiveContainerHeight();
+        const barHeight = (containerHeight / 2) + 1;
 
         for (let i = 0; i < this._waveBars.length; i++) {
             const isLast = (i === this._waveBars.length - 1);
@@ -1123,8 +1134,9 @@ export default class VoicifyExtension extends Extension {
     _showWaveWidget() {
         if (this._waveWidget) return;
 
-        const { barWidth, barSpacing, containerHeight } = this._currentSize;
+        const { barWidth, barSpacing } = this._currentSize;
         const numBars = this._getEffectiveNumBars();
+        const containerHeight = this._getEffectiveContainerHeight();
         const db = this._currentDesign.bars;
         const dc = this._currentDesign.container;
         const effectiveWidth = barWidth + db.widthAdjust;
@@ -1133,29 +1145,18 @@ export default class VoicifyExtension extends Extension {
         const totalWidth = containerWidth + WAVE_H_PAD * 2;
         const totalHeight = containerHeight + WAVE_V_PAD * 2;
 
-        // Create blur background layer (separate chrome, behind wave widget)
-        if (dc.blur) {
-            try {
-                this._blurWidget = new St.Widget({
-                    style: `border-radius: ${dc.borderRadius}px;`,
-                    reactive: false,
-                    can_focus: false,
-                });
-                this._blurWidget.set_size(totalWidth, totalHeight);
-                const blurEffect = new Shell.BlurEffect({
-                    brightness: dc.blur.brightness ?? 0.6,
-                });
-                blurEffect.radius = dc.blur.radius ?? 40;
-                this._blurWidget.add_effect_with_name('blur', blurEffect);
-                Main.layoutManager.addChrome(this._blurWidget);
-            } catch (e) {
-                console.debug('Voicify: blur effect not available:', e.message);
-                if (this._blurWidget) {
-                    this._blurWidget.destroy();
-                    this._blurWidget = null;
-                }
-            }
+        // Calculate shadow padding - DrawingArea needs extra space for Cairo shadow
+        const shadowLayers = (this._currentDesign.layers || []).filter(l => l.type === 'shadow');
+        let shadowPad = 0;
+        for (const sl of shadowLayers) {
+            const blur = sl.blur || 8;
+            const ox = Math.abs(sl.x || 0);
+            const oy = Math.abs(sl.y || 0);
+            shadowPad = Math.max(shadowPad, blur + ox, blur + oy);
         }
+        this._shadowPad = shadowPad;
+        const outerWidth = totalWidth + shadowPad * 2;
+        const outerHeight = totalHeight + shadowPad * 2;
 
         this._waveWidget = new St.Widget({
             style_class: 'voicify-wave-overlay',
@@ -1165,38 +1166,26 @@ export default class VoicifyExtension extends Extension {
             visible: true,
         });
 
-        // Background widget: St.DrawingArea for Cairo layers, or St.Widget with CSS
-        const hasAdvancedLayers = (this._currentDesign.layers || []).some(
-            l => ['innerHighlight', 'specularHighlight', 'innerShadow'].includes(l.type)
-        );
-
-        if (hasAdvancedLayers) {
-            this._bgWidget = new St.DrawingArea({
-                reactive: false,
-            });
-            this._bgWidget.set_size(totalWidth, totalHeight);
-            this._bgWidget.connect('repaint', (area) => {
-                const cr = area.get_context();
-                LayerPainter.drawAllCanvasLayers(cr, this._currentDesign, this._currentTheme, totalWidth, totalHeight);
-                cr.$dispose();
-            });
-            this._bgIsDrawingArea = true;
-        } else {
-            this._bgWidget = new St.Widget({
-                style: this._buildContainerStyle(),
-                reactive: false,
-                can_focus: false,
-            });
-            this._bgWidget.set_size(totalWidth, totalHeight);
-            this._bgIsDrawingArea = false;
-        }
+        // Background: St.DrawingArea sized with shadow padding for Cairo shadow rendering
+        this._bgWidget = new St.DrawingArea({ reactive: false });
+        this._bgWidget.set_size(outerWidth, outerHeight);
+        this._bgWidget.connect('repaint', (area) => {
+            const cr = area.get_context();
+            LayerPainter.drawAllCanvasLayersAt(cr, this._currentDesign, this._currentTheme,
+                shadowPad, shadowPad, totalWidth, totalHeight);
+            cr.$dispose();
+        });
         this._waveWidget.add_child(this._bgWidget);
 
-        // Pixel grid overlay (retro design)
+        // NOTE: Shell.BlurEffect is always rectangular - cannot be clipped to border-radius.
+        // Blur disabled to avoid visible rectangular corners on rounded designs.
+
+        // Pixel grid overlay (retro design) - offset into content area
         const hasPixelGrid = (this._currentDesign.layers || []).some(l => l.type === 'pixelGrid');
         if (hasPixelGrid) {
             this._createPixelGridWidget(totalWidth, totalHeight);
             if (this._pixelGridWidget) {
+                this._pixelGridWidget.set_position(shadowPad, shadowPad);
                 this._waveWidget.add_child(this._pixelGridWidget);
             }
         }
@@ -1207,6 +1196,8 @@ export default class VoicifyExtension extends Extension {
             vertical: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
+            x: shadowPad,
+            y: shadowPad,
         });
 
         this._waveBars = [];
@@ -1274,6 +1265,7 @@ export default class VoicifyExtension extends Extension {
         if (this._modifier > 0) {
             this._createTrailBars(numBars, effectiveWidth, barSpacing, barHeight, barCenter,
                 center, edge, db, totalWidth, totalHeight);
+            this._trailContainer.set_position(shadowPad, shadowPad);
             this._waveWidget.add_child(this._trailContainer);
         }
 
@@ -1285,67 +1277,117 @@ export default class VoicifyExtension extends Extension {
             console.error(`Voicify: _createDecorations failed: ${e.message}\n${e.stack}`);
         }
 
+        this._waveWidget.set_size(outerWidth, outerHeight);
         Main.layoutManager.addChrome(this._waveWidget);
         this._positionWaveWidget(totalWidth, totalHeight);
+
+        // Drag-to-reposition
+        this._waveWidget.connect('button-press-event', (actor, event) => {
+            if (event.get_button() !== 1) return Clutter.EVENT_PROPAGATE;
+            this._isDragging = true;
+            const [px, py] = event.get_coords();
+            this._dragOffsetX = px - actor.x;
+            this._dragOffsetY = py - actor.y;
+            return Clutter.EVENT_STOP;
+        });
+
+        this._waveWidget.connect('motion-event', (actor, event) => {
+            if (!this._isDragging) return Clutter.EVENT_PROPAGATE;
+            const [px, py] = event.get_coords();
+            const newX = Math.round(px - this._dragOffsetX);
+            const newY = Math.round(py - this._dragOffsetY);
+            actor.set_position(newX, newY);
+            return Clutter.EVENT_STOP;
+        });
+
+        this._waveWidget.connect('button-release-event', (actor, event) => {
+            if (!this._isDragging) return Clutter.EVENT_PROPAGATE;
+            this._saveWidgetPosition();
+            console.debug(`Voicify: drag saved pos (${this._posX.toFixed(3)}, ${this._posY.toFixed(3)})`);
+            this._isDragging = false;
+            return Clutter.EVENT_STOP;
+        });
     }
 
     _positionWaveWidget(containerWidth, containerHeight) {
         if (!this._waveWidget) return;
+        const shadowPad = this._shadowPad || 0;
 
         const monitor = Main.layoutManager.primaryMonitor;
-        const margin = 20;
         const panelHeight = Main.panel.height;
-        let x, y;
 
-        const middleY = monitor.y + (monitor.height - containerHeight) / 2;
+        const usableW = monitor.width - containerWidth;
+        const usableH = monitor.height - panelHeight - containerHeight;
 
-        switch (this._currentPosition) {
-            case 'top-left':
-                x = monitor.x + margin;
-                y = monitor.y + panelHeight + margin;
-                break;
-            case 'top-center':
-                x = monitor.x + (monitor.width - containerWidth) / 2;
-                y = monitor.y + panelHeight + margin;
-                break;
-            case 'top-right':
-                x = monitor.x + monitor.width - containerWidth - margin;
-                y = monitor.y + panelHeight + margin;
-                break;
-            case 'middle-left':
-                x = monitor.x + margin;
-                y = middleY;
-                break;
-            case 'middle-center':
-                x = monitor.x + (monitor.width - containerWidth) / 2;
-                y = middleY;
-                break;
-            case 'middle-right':
-                x = monitor.x + monitor.width - containerWidth - margin;
-                y = middleY;
-                break;
-            case 'bottom-left':
-                x = monitor.x + margin;
-                y = monitor.y + monitor.height - containerHeight - margin;
-                break;
-            case 'bottom-center':
-                x = monitor.x + (monitor.width - containerWidth) / 2;
-                y = monitor.y + monitor.height - containerHeight - margin;
-                break;
-            case 'bottom-right':
-                x = monitor.x + monitor.width - containerWidth - margin;
-                y = monitor.y + monitor.height - containerHeight - margin;
-                break;
-            default:
-                x = monitor.x + (monitor.width - containerWidth) / 2;
-                y = monitor.y + monitor.height - containerHeight - margin;
-                break;
+        // Content area position
+        const contentX = monitor.x + Math.max(0, usableW) * this._posX;
+        const contentY = monitor.y + panelHeight + Math.max(0, usableH) * this._posY;
+
+        // waveWidget is larger by shadowPad on each side
+        this._waveWidget.set_position(Math.round(contentX - shadowPad), Math.round(contentY - shadowPad));
+        console.debug(`Voicify: position widget at pos (${this._posX.toFixed(3)}, ${this._posY.toFixed(3)}) -> pixel (${this._waveWidget.x}, ${this._waveWidget.y})`);
+    }
+
+    _saveWidgetPosition() {
+        if (!this._waveWidget || !this._settings) return;
+        const shadowPad = this._shadowPad || 0;
+
+        const monitor = Main.layoutManager.primaryMonitor;
+        const panelHeight = Main.panel.height;
+        // Content dimensions (without shadow padding)
+        const containerWidth = this._waveWidget.width - shadowPad * 2;
+        const containerHeight = this._waveWidget.height - shadowPad * 2;
+
+        const usableW = monitor.width - containerWidth;
+        const usableH = monitor.height - panelHeight - containerHeight;
+
+        // Content position = waveWidget position + shadowPad
+        const contentX = this._waveWidget.x + shadowPad;
+        const contentY = this._waveWidget.y + shadowPad;
+        const posX = usableW > 0 ? (contentX - monitor.x) / usableW : 0.5;
+        const posY = usableH > 0 ? (contentY - monitor.y - panelHeight) / usableH : 0.5;
+
+        this._posX = Math.max(0, Math.min(1, posX));
+        this._posY = Math.max(0, Math.min(1, posY));
+        this._settings.set_double('wave-pos-x', this._posX);
+        this._settings.set_double('wave-pos-y', this._posY);
+    }
+
+    _preservePosition() {
+        if (!this._waveWidget) return;
+        const shadowPad = this._shadowPad || 0;
+        const monitor = Main.layoutManager.primaryMonitor;
+        const panelHeight = Main.panel.height;
+        const containerWidth = this._waveWidget.width - shadowPad * 2;
+        const containerHeight = this._waveWidget.height - shadowPad * 2;
+        const usableW = monitor.width - containerWidth;
+        const usableH = monitor.height - panelHeight - containerHeight;
+        const contentX = this._waveWidget.x + shadowPad;
+        const contentY = this._waveWidget.y + shadowPad;
+        this._posX = usableW > 0 ? Math.max(0, Math.min(1, (contentX - monitor.x) / usableW)) : 0.5;
+        this._posY = usableH > 0 ? Math.max(0, Math.min(1, (contentY - monitor.y - panelHeight) / usableH)) : 0.5;
+    }
+
+    _rebuildWaveWidget() {
+        if (!this._waveWidget || this._state !== State.RECORDING) return;
+        this._preservePosition();
+        this._hideWaveWidget();
+        this._showWaveWidget();
+        this._startLevelWave();
+    }
+
+    _debouncedRebuild() {
+        if (this._rebuildDebounceTimer) {
+            GLib.Source.remove(this._rebuildDebounceTimer);
+            this._rebuildDebounceTimer = null;
         }
-
-        this._waveWidget.set_position(x, y);
-        if (this._blurWidget) {
-            this._blurWidget.set_position(x, y);
-        }
+        // Update immediately just the in-memory values (already done by caller)
+        // Delay the expensive widget rebuild
+        this._rebuildDebounceTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+            this._rebuildDebounceTimer = null;
+            this._rebuildWaveWidget();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _updateWaveWidget() {
@@ -1360,6 +1402,15 @@ export default class VoicifyExtension extends Extension {
     }
 
     _hideWaveWidget() {
+        // Always save position before destroying widget (safety net for missed button-release)
+        if (this._waveWidget && this._settings) {
+            this._preservePosition();
+            this._settings.set_double('wave-pos-x', this._posX);
+            this._settings.set_double('wave-pos-y', this._posY);
+            console.debug(`Voicify: hide saved pos (${this._posX.toFixed(3)}, ${this._posY.toFixed(3)})`);
+        }
+
+        this._isDragging = false;
         this._cleanupAnimationTimers();
         this._destroyDecorations();
         this._destroyTrailBars();
@@ -1371,7 +1422,6 @@ export default class VoicifyExtension extends Extension {
             this._waveWidget = null;
             this._waveContainer = null;
             this._bgWidget = null;
-            this._bgIsDrawingArea = false;
             this._waveBars = null;
         }
     }
@@ -1476,7 +1526,8 @@ export default class VoicifyExtension extends Extension {
         const { barWidth, barSpacing } = this._currentSize;
         const effectiveWidth = barWidth + db.widthAdjust;
         const barCenter = (this._trailBars.length - 1) / 2;
-        const barHeight = (this._currentSize.containerHeight / 2) + 1;
+        const containerHeight = this._getEffectiveContainerHeight();
+        const barHeight = (containerHeight / 2) + 1;
 
         for (let i = 0; i < this._trailBars.length; i++) {
             const isLast = (i === this._trailBars.length - 1);
@@ -1519,6 +1570,10 @@ export default class VoicifyExtension extends Extension {
                     break;
             }
             if (widget) {
+                // Offset decoration into content area (past shadow padding)
+                const sp = this._shadowPad || 0;
+                widget.set_position(widget.x + sp, widget.y + sp);
+
                 if (layer.position === 'background') {
                     // Insert behind bars (before trail/main containers)
                     if (this._trailContainer) {
@@ -1822,12 +1877,9 @@ export default class VoicifyExtension extends Extension {
                     }
                 }
             } else {
-                // Phase 2: whole box fades out with opacity
+                // Phase 2: whole box fades out with opacity (blur is child, inherits opacity)
                 const fadeProgress = (phase - barFrames) / fadeFrames;
                 this._waveWidget.opacity = Math.round(255 * (1 - fadeProgress));
-                if (this._blurWidget) {
-                    this._blurWidget.opacity = Math.round(255 * (1 - fadeProgress));
-                }
             }
 
             if (phase >= totalFrames) {
