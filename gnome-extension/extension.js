@@ -11,6 +11,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import { loadDesigns } from './designLoader.js';
 
 // Size variants
 const SIZES = {
@@ -18,6 +19,15 @@ const SIZES = {
     'medium': { barWidth: 4, barSpacing: 3, numBars: 26, containerHeight: 56 },
     'large':  { barWidth: 6, barSpacing: 4, numBars: 20, containerHeight: 72 },
 };
+
+// Terminal WM classes that use Ctrl+Shift+V instead of Ctrl+V for paste
+const TERMINAL_WM_CLASSES = [
+    'ghostty', 'gnome-terminal', 'gnome-terminal-server',
+    'alacritty', 'kitty', 'wezterm', 'foot', 'tilix',
+    'terminator', 'xfce4-terminal', 'konsole', 'yakuake',
+    'guake', 'sakura', 'lxterminal', 'mate-terminal',
+    'xterm', 'urxvt', 'st',
+];
 
 const MAX_SCALE = 1.0;
 const MIN_SCALE = 0.04;
@@ -47,6 +57,7 @@ const THEMES = {
     'ember':       { name: 'Ember',       center: {r: 239, g: 83,  b: 80},  edge: {r: 255, g: 143, b: 0}   },
     'twilight':    { name: 'Twilight',    center: {r: 179, g: 157, b: 219}, edge: {r: 92,  g: 107, b: 192} },
     'graphite':    { name: 'Graphite',    center: {r: 189, g: 189, b: 189}, edge: {r: 120, g: 144, b: 156} },
+    'phosphor':    { name: 'Phosphor',   center: {r: 50,  g: 255, b: 80},  edge: {r: 20,  g: 160, b: 40}  },
 };
 
 // D-Bus interface definition
@@ -123,9 +134,17 @@ export default class VoicifyExtension extends Extension {
         this._virtualKeyboard = null;
         this._settingsChangedIds = [];
         this._currentTheme = THEMES['mint-dream'];
+        this._designs = loadDesigns(this.path);
+        this._currentDesign = this._designs.get('modern') || this._designs.values().next().value;
         this._currentSize = SIZES['medium'];
-        this._bgOpacity = 0.25;
+        this._decorationWidgets = [];
+        this._blurWidget = null;
+        this._pixelGridWidget = null;
         this._waveContainer = null;
+        this._modifier = 0;
+        this._trailBars = null;
+        this._trailLevel = 0;
+        this._trailContainer = null;
         this._currentPosition = 'bottom-center';
         this._reactionTime = 10;
         this._smoothingAlpha = 0.5;
@@ -136,16 +155,20 @@ export default class VoicifyExtension extends Extension {
 
         // Apply initial settings
         this._applyTheme();
+        this._applyDesign();
         this._applySize();
         this._applyPosition();
         this._applyReactionTime();
         this._applySmoothing();
         this._applySensitivity();
-        this._applyBgOpacity();
+        this._applyModifier();
 
         // Connect settings change handlers
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-theme', () => this._applyTheme())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::wave-design', () => this._applyDesign())
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-size', () => this._applySize())
@@ -163,7 +186,7 @@ export default class VoicifyExtension extends Extension {
             this._settings.connect('changed::wave-sensitivity', () => this._applySensitivity())
         );
         this._settingsChangedIds.push(
-            this._settings.connect('changed::wave-bg-opacity', () => this._applyBgOpacity())
+            this._settings.connect('changed::wave-modifier', () => this._applyModifier())
         );
 
         // Shortcut change handlers
@@ -245,6 +268,11 @@ export default class VoicifyExtension extends Extension {
         this._ungrabShortcut('_realtimeAction');
         this._ungrabShortcut('_postAutoPasteAction');
         this._ungrabShortcut('_postRouterAction');
+
+        this._destroyDecorations();
+        this._destroyTrailBars();
+        this._destroyBlur();
+        this._destroyCanvasBackground();
 
         if (this._waveWidget) {
             this._waveWidget.destroy();
@@ -386,6 +414,33 @@ export default class VoicifyExtension extends Extension {
             : 'mint-dream';
         this._currentTheme = THEMES[themeId] || THEMES['mint-dream'];
         this._updateBarColors();
+        this._updateTrailBarColors();
+
+        // Update CSS background
+        if (this._waveContainer) {
+            this._waveContainer.style = this._buildContainerStyle();
+        }
+    }
+
+    _applyDesign() {
+        const designId = this._settings
+            ? this._settings.get_string('wave-design')
+            : 'modern';
+        this._currentDesign = this._designs.get(designId) || this._designs.values().next().value;
+
+        // Auto-set color theme from design's default
+        if (this._currentDesign.defaultTheme && this._settings && THEMES[this._currentDesign.defaultTheme]) {
+            this._settings.set_string('wave-theme', this._currentDesign.defaultTheme);
+        }
+
+        // Rebuild widget if visible
+        if (this._waveWidget && this._state === State.RECORDING) {
+            this._hideWaveWidget();
+            this._showWaveWidget();
+            this._startLevelWave();
+        } else if (this._waveContainer) {
+            this._updateBarColors();
+        }
     }
 
     _applySize() {
@@ -408,7 +463,8 @@ export default class VoicifyExtension extends Extension {
 
         if (this._waveWidget) {
             const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
-            const containerWidth = numBars * (barWidth + barSpacing) + WAVE_H_PAD * 2;
+            const effectiveWidth = barWidth + this._currentDesign.bars.widthAdjust;
+            const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing + WAVE_H_PAD * 2;
             const totalHeight = containerHeight + WAVE_V_PAD * 2;
             this._positionWaveWidget(containerWidth, totalHeight);
         }
@@ -441,22 +497,134 @@ export default class VoicifyExtension extends Extension {
         this._sensitivityGain = val / 100;
     }
 
-    _applyBgOpacity() {
+    _applyModifier() {
         const val = this._settings
-            ? this._settings.get_int('wave-bg-opacity')
-            : 25;
-        this._bgOpacity = val / 100;
+            ? this._settings.get_int('wave-modifier')
+            : 0;
+        this._modifier = val / 100;
 
-        if (this._waveContainer) {
-            this._waveContainer.style = `background-color: rgba(0, 0, 0, ${this._bgOpacity.toFixed(2)});`;
+        // Rebuild widget to add/remove trail bars
+        if (this._waveWidget && this._state === State.RECORDING) {
+            this._hideWaveWidget();
+            this._showWaveWidget();
+            this._startLevelWave();
+        }
+    }
+
+    // --- CSS fallback for container background ---
+
+    _buildContainerStyle() {
+        const dc = this._currentDesign.container;
+        const [cr, cg, cb] = dc.bgColor;
+        const alpha = dc.bgOpacity ?? 0.25;
+        let style = `background-color: rgba(${cr}, ${cg}, ${cb}, ${alpha.toFixed(2)});`;
+        style += ` border-radius: ${dc.borderRadius}px;`;
+        return style;
+    }
+
+    // --- Canvas-based background (proper alpha at rounded corners) ---
+
+    // Pixel Grid Widget - grid of small St.Widget pixels
+    // width/height = totalWidth/totalHeight (matches shadow/bg area)
+    _createPixelGridWidget(width, height) {
+        const pixelGridLayer = (this._currentDesign.layers || []).find(l => l.type === 'pixelGrid');
+        if (!pixelGridLayer) return;
+
+        const dec = pixelGridLayer;
+        const db = this._currentDesign.bars;
+        const dc = this._currentDesign.container;
+        const { barWidth } = this._currentSize;
+
+        let center, edge;
+        if (db.colorOverride) {
+            const co = db.colorOverride;
+            center = { r: co.center[0], g: co.center[1], b: co.center[2] };
+            edge = { r: co.edge[0], g: co.edge[1], b: co.edge[2] };
+        } else {
+            center = this._currentTheme.center;
+            edge = this._currentTheme.edge;
+        }
+
+        const alpha = dec.alpha || 0.12;
+        const { barSpacing } = this._currentSize;
+        const effectiveWidth = barWidth + db.widthAdjust;
+        // Cell size = bar width, gap = bar spacing (uniform grid matching bars)
+        const cellSize = dec.cellSize || effectiveWidth;
+        const gap = dec.cellGap || barSpacing;
+        const radius = Math.min(height / 2, dc.borderRadius);
+
+        this._pixelGridWidget = new St.Widget({
+            style: `border-radius: ${radius}px;`,
+            clip_to_allocation: true,
+            reactive: false,
+            can_focus: false,
+        });
+        this._pixelGridWidget.set_size(width, height);
+
+        const stride = cellSize + gap;
+        // Fill entire area edge-to-edge (clip_to_allocation trims overflow)
+        const numCols = Math.ceil(width / stride) + 1;
+        const numRows = Math.ceil(height / stride) + 2;
+
+        const midCol = (numCols - 1) / 2;
+
+        for (let row = 0; row < numRows; row++) {
+            for (let col = 0; col < numCols; col++) {
+                const dist = midCol > 0 ? Math.abs(col - midCol) / midCol : 0;
+                const colR = Math.round(center.r + (edge.r - center.r) * dist);
+                const colG = Math.round(center.g + (edge.g - center.g) * dist);
+                const colB = Math.round(center.b + (edge.b - center.b) * dist);
+
+                const pixel = new St.Widget({
+                    style: `background-color: rgba(${colR},${colG},${colB},${alpha});`,
+                    reactive: false,
+                    can_focus: false,
+                    x: col * stride,
+                    y: row * stride,
+                    width: cellSize,
+                    height: cellSize,
+                });
+
+                this._pixelGridWidget.add_child(pixel);
+            }
+        }
+
+        // Widget is added as child by caller, not as separate chrome
+    }
+
+    _destroyPixelGrid() {
+        if (this._pixelGridWidget) {
+            this._pixelGridWidget.destroy();
+            this._pixelGridWidget = null;
         }
     }
 
     _updateBarColors(colors = null) {
         if (!this._waveBars) return;
 
-        const { center, edge } = colors || this._currentTheme;
+        const db = this._currentDesign.bars;
+        let center, edge;
+
+        if (colors) {
+            // Explicit colors passed (e.g. upload animation) - use as-is
+            ({ center, edge } = colors);
+        } else if (db.colorOverride) {
+            const co = db.colorOverride;
+            center = { r: co.center[0], g: co.center[1], b: co.center[2] };
+            edge = { r: co.edge[0], g: co.edge[1], b: co.edge[2] };
+        } else {
+            ({ center, edge } = this._currentTheme);
+        }
+
+        const mute = db.colorMute || 0;
+        if (mute > 0 && !colors) {
+            const gray = { r: 160, g: 160, b: 160 };
+            center = this._blendColor(center, gray, mute);
+            edge = this._blendColor(edge, gray, mute);
+        }
+
         const { barWidth, barSpacing } = this._currentSize;
+        const effectiveWidth = barWidth + db.widthAdjust;
         const barCenter = (this._waveBars.length - 1) / 2;
         const barHeight = (this._currentSize.containerHeight / 2) + 1;
 
@@ -466,7 +634,21 @@ export default class VoicifyExtension extends Extension {
             const r = Math.round(center.r + (edge.r - center.r) * dist);
             const g = Math.round(center.g + (edge.g - center.g) * dist);
             const b = Math.round(center.b + (edge.b - center.b) * dist);
-            this._waveBars[i].style = `width: ${barWidth}px; height: ${barHeight}px; background-color: rgb(${r},${g},${b});${isLast ? '' : ` margin-right: ${barSpacing}px;`}`;
+
+            let style = `width: ${effectiveWidth}px; height: ${barHeight}px; background-color: rgb(${r},${g},${b}); border-radius: ${db.borderRadius}px;`;
+
+            if (db.glowFromTheme) {
+                style += ` box-shadow: 0 0 ${db.glowRadius}px rgba(${r},${g},${b},${db.glowAlpha});`;
+            } else if (db.shadow) {
+                style += ` box-shadow: ${db.shadow};`;
+            }
+
+            if (db.highlight) {
+                style += ` border-top: 1px solid rgba(255,255,255,0.15);`;
+            }
+
+            if (!isLast) style += ` margin-right: ${barSpacing}px;`;
+            this._waveBars[i].style = style;
         }
     }
 
@@ -528,9 +710,10 @@ export default class VoicifyExtension extends Extension {
         const { center, edge } = this._currentTheme;
 
         if (state === State.UPLOADING) {
+            const shift = this._currentDesign.uploadHueShift ?? 120;
             return {
-                center: this._rotateHue(center, 120),
-                edge: this._rotateHue(edge, 120),
+                center: this._rotateHue(center, shift),
+                edge: this._rotateHue(edge, shift),
             };
         }
 
@@ -834,11 +1017,27 @@ export default class VoicifyExtension extends Extension {
         try {
             if (!this._virtualKeyboard) return;
 
+            const { app } = this._getFocusedWindow();
+            const appLower = (app || '').toLowerCase();
+            const isTerminal = TERMINAL_WM_CLASSES.some(t => appLower.includes(t));
+
             const eventTime = global.get_current_time();
-            this._virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
-            this._virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
-            this._virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
-            this._virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+
+            if (isTerminal) {
+                // Ctrl+Shift+V for terminals
+                this._virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(eventTime + 40, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(eventTime + 50, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+            } else {
+                // Ctrl+V for standard apps
+                this._virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+            }
         } catch (error) {
             console.debug('Virtual keyboard paste failed:', error.message);
         }
@@ -850,8 +1049,37 @@ export default class VoicifyExtension extends Extension {
         if (this._waveWidget) return;
 
         const { barWidth, barSpacing, numBars, containerHeight } = this._currentSize;
-        const containerWidth = numBars * (barWidth + barSpacing);
+        const db = this._currentDesign.bars;
+        const dc = this._currentDesign.container;
+        const effectiveWidth = barWidth + db.widthAdjust;
+        const containerWidth = numBars * (effectiveWidth + barSpacing) - barSpacing;
         const barHeight = (containerHeight / 2) + 1;
+        const totalWidth = containerWidth + WAVE_H_PAD * 2;
+        const totalHeight = containerHeight + WAVE_V_PAD * 2;
+
+        // Create blur background layer (separate chrome, behind wave widget)
+        if (dc.blur) {
+            try {
+                this._blurWidget = new St.Widget({
+                    style: `border-radius: ${dc.borderRadius}px;`,
+                    reactive: false,
+                    can_focus: false,
+                });
+                this._blurWidget.set_size(totalWidth, totalHeight);
+                const blurEffect = new Shell.BlurEffect({
+                    brightness: dc.blur.brightness ?? 0.6,
+                });
+                blurEffect.radius = dc.blur.radius ?? 40;
+                this._blurWidget.add_effect_with_name('blur', blurEffect);
+                Main.layoutManager.addChrome(this._blurWidget);
+            } catch (e) {
+                console.debug('Voicify: blur effect not available:', e.message);
+                if (this._blurWidget) {
+                    this._blurWidget.destroy();
+                    this._blurWidget = null;
+                }
+            }
+        }
 
         this._waveWidget = new St.Widget({
             style_class: 'voicify-wave-overlay',
@@ -861,17 +1089,52 @@ export default class VoicifyExtension extends Extension {
             visible: true,
         });
 
+        // Check if design has pixelGrid layer
+        const hasPixelGrid = (this._currentDesign.layers || []).some(l => l.type === 'pixelGrid');
+
+        if (hasPixelGrid) {
+            // Layer stack: bgWidget -> pixelGrid -> waveContainer(transparent)
+            this._bgWidget = new St.Widget({
+                style: this._buildContainerStyle(),
+                reactive: false,
+                can_focus: false,
+            });
+            this._bgWidget.set_size(totalWidth, totalHeight);
+            this._waveWidget.add_child(this._bgWidget);
+
+            this._createPixelGridWidget(totalWidth, totalHeight);
+            if (this._pixelGridWidget) {
+                this._waveWidget.add_child(this._pixelGridWidget);
+            }
+        }
+
         this._waveContainer = new St.BoxLayout({
             style_class: 'voicify-wave-container',
-            style: `background-color: rgba(0, 0, 0, ${this._bgOpacity.toFixed(2)});`,
+            style: hasPixelGrid ? `border-radius: ${dc.borderRadius}px;` : this._buildContainerStyle(),
             vertical: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            clip_to_allocation: true,
         });
 
         this._waveBars = [];
-        const { center, edge } = this._currentTheme;
+
+        let center, edge;
+        if (db.colorOverride) {
+            const co = db.colorOverride;
+            center = { r: co.center[0], g: co.center[1], b: co.center[2] };
+            edge = { r: co.edge[0], g: co.edge[1], b: co.edge[2] };
+        } else {
+            center = { ...this._currentTheme.center };
+            edge = { ...this._currentTheme.edge };
+        }
+
+        const mute = db.colorMute || 0;
+        if (mute > 0) {
+            const gray = { r: 160, g: 160, b: 160 };
+            center = this._blendColor(center, gray, mute);
+            edge = this._blendColor(edge, gray, mute);
+        }
+
         const barCenter = (numBars - 1) / 2;
         for (let i = 0; i < numBars; i++) {
             const isLast = (i === numBars - 1);
@@ -879,10 +1142,31 @@ export default class VoicifyExtension extends Extension {
             const r = Math.round(center.r + (edge.r - center.r) * dist);
             const g = Math.round(center.g + (edge.g - center.g) * dist);
             const b = Math.round(center.b + (edge.b - center.b) * dist);
-            const barOpacity = Math.round(80 + 175 * (1 - dist));
+
+            let barOpacity;
+            if (db.opacityMode === 'uniform') {
+                barOpacity = db.opacityUniform;
+            } else {
+                barOpacity = Math.round(db.opacityMin + (db.opacityMax - db.opacityMin) * (1 - dist));
+            }
+
+            let barStyle = `width: ${effectiveWidth}px; height: ${barHeight}px; background-color: rgb(${r},${g},${b}); border-radius: ${db.borderRadius}px;`;
+
+            if (db.glowFromTheme) {
+                barStyle += ` box-shadow: 0 0 ${db.glowRadius}px rgba(${r},${g},${b},${db.glowAlpha});`;
+            } else if (db.shadow) {
+                barStyle += ` box-shadow: ${db.shadow};`;
+            }
+
+            if (db.highlight) {
+                barStyle += ` border-top: 1px solid rgba(255,255,255,0.15);`;
+            }
+
+            if (!isLast) barStyle += ` margin-right: ${barSpacing}px;`;
+
             const bar = new St.Widget({
                 style_class: 'voicify-wave-bar',
-                style: `width: ${barWidth}px; height: ${barHeight}px; background-color: rgb(${r},${g},${b});${isLast ? '' : ` margin-right: ${barSpacing}px;`}`,
+                style: barStyle,
                 visible: true,
                 clip_to_allocation: true,
                 opacity: barOpacity,
@@ -891,10 +1175,22 @@ export default class VoicifyExtension extends Extension {
             this._waveContainer.add_child(bar);
         }
 
-        const totalWidth = containerWidth + WAVE_H_PAD * 2;
-        const totalHeight = containerHeight + WAVE_V_PAD * 2;
         this._waveContainer.set_size(totalWidth, totalHeight);
+
+        // Trail bars (shadow effect behind main bars, controlled by modifier)
+        if (this._modifier > 0) {
+            this._createTrailBars(numBars, effectiveWidth, barSpacing, barHeight, barCenter,
+                center, edge, db, totalWidth, totalHeight);
+            this._waveWidget.add_child(this._trailContainer);
+        }
+
         this._waveWidget.add_child(this._waveContainer);
+
+        try {
+            this._createDecorations(totalWidth, totalHeight);
+        } catch (e) {
+            console.error(`Voicify: _createDecorations failed: ${e.message}\n${e.stack}`);
+        }
 
         Main.layoutManager.addChrome(this._waveWidget);
         this._positionWaveWidget(totalWidth, totalHeight);
@@ -954,6 +1250,9 @@ export default class VoicifyExtension extends Extension {
         }
 
         this._waveWidget.set_position(x, y);
+        if (this._blurWidget) {
+            this._blurWidget.set_position(x, y);
+        }
     }
 
     _updateWaveWidget() {
@@ -961,18 +1260,266 @@ export default class VoicifyExtension extends Extension {
 
         this._waveWidget.style_class = 'voicify-wave-overlay uploading';
         this._stopLevelWave();
+        if (this._trailContainer) {
+            this._trailContainer.visible = false;
+        }
         this._startUploadAnimation();
     }
 
     _hideWaveWidget() {
         this._cleanupAnimationTimers();
+        this._destroyDecorations();
+        this._destroyTrailBars();
+        this._destroyPixelGrid();
+        this._destroyBlur();
 
         if (this._waveWidget) {
             this._waveWidget.destroy();
             this._waveWidget = null;
             this._waveContainer = null;
+            this._bgWidget = null;
             this._waveBars = null;
         }
+    }
+
+    _destroyBlur() {
+        if (this._blurWidget) {
+            const effect = this._blurWidget.get_effect('blur');
+            if (effect) this._blurWidget.remove_effect(effect);
+            this._blurWidget.destroy();
+            this._blurWidget = null;
+        }
+    }
+
+    // --- Trail bars (shadow/echo effect) ---
+
+    _createTrailBars(numBars, effectiveWidth, barSpacing, barHeight, barCenter,
+                     center, edge, db, totalWidth, totalHeight) {
+        this._trailContainer = new St.BoxLayout({
+            style_class: 'voicify-wave-container',
+            vertical: false,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._trailBars = [];
+        const trailOpacity = Math.round(this._modifier * 200);
+
+        // Slightly dim colors for trail effect
+        const darken = 0.7;
+        const trailCenter = {
+            r: Math.round(center.r * darken),
+            g: Math.round(center.g * darken),
+            b: Math.round(center.b * darken),
+        };
+        const trailEdge = {
+            r: Math.round(edge.r * darken),
+            g: Math.round(edge.g * darken),
+            b: Math.round(edge.b * darken),
+        };
+
+        for (let i = 0; i < numBars; i++) {
+            const isLast = (i === numBars - 1);
+            const dist = Math.abs(i - barCenter) / barCenter;
+            const r = Math.round(trailCenter.r + (trailEdge.r - trailCenter.r) * dist);
+            const g = Math.round(trailCenter.g + (trailEdge.g - trailCenter.g) * dist);
+            const b = Math.round(trailCenter.b + (trailEdge.b - trailCenter.b) * dist);
+
+            let barStyle = `width: ${effectiveWidth}px; height: ${barHeight}px; background-color: rgb(${r},${g},${b}); border-radius: ${db.borderRadius}px;`;
+            if (!isLast) barStyle += ` margin-right: ${barSpacing}px;`;
+
+            const trailBar = new St.Widget({
+                style_class: 'voicify-wave-bar',
+                style: barStyle,
+                visible: true,
+                clip_to_allocation: true,
+                opacity: trailOpacity,
+            });
+            trailBar.set_pivot_point(0.5, db.pivotY);
+            trailBar.scale_y = db.scaleMin;
+            this._trailBars.push(trailBar);
+            this._trailContainer.add_child(trailBar);
+        }
+
+        this._trailContainer.set_size(totalWidth, totalHeight);
+        this._trailLevel = 0;
+    }
+
+    _destroyTrailBars() {
+        if (this._trailContainer) {
+            this._trailContainer.destroy();
+            this._trailContainer = null;
+        }
+        this._trailBars = null;
+        this._trailLevel = 0;
+    }
+
+    _updateTrailBarColors() {
+        if (!this._trailBars) return;
+
+        const db = this._currentDesign.bars;
+        let center, edge;
+
+        if (db.colorOverride) {
+            const co = db.colorOverride;
+            center = { r: co.center[0], g: co.center[1], b: co.center[2] };
+            edge = { r: co.edge[0], g: co.edge[1], b: co.edge[2] };
+        } else {
+            ({ center, edge } = this._currentTheme);
+        }
+
+        // Slightly dim colors for trail effect
+        const darken = 0.7;
+        center = { r: Math.round(center.r * darken), g: Math.round(center.g * darken), b: Math.round(center.b * darken) };
+        edge = { r: Math.round(edge.r * darken), g: Math.round(edge.g * darken), b: Math.round(edge.b * darken) };
+
+        const { barWidth, barSpacing } = this._currentSize;
+        const effectiveWidth = barWidth + db.widthAdjust;
+        const barCenter = (this._trailBars.length - 1) / 2;
+        const barHeight = (this._currentSize.containerHeight / 2) + 1;
+
+        for (let i = 0; i < this._trailBars.length; i++) {
+            const isLast = (i === this._trailBars.length - 1);
+            const dist = Math.abs(i - barCenter) / barCenter;
+            const r = Math.round(center.r + (edge.r - center.r) * dist);
+            const g = Math.round(center.g + (edge.g - center.g) * dist);
+            const b = Math.round(center.b + (edge.b - center.b) * dist);
+
+            let style = `width: ${effectiveWidth}px; height: ${barHeight}px; background-color: rgb(${r},${g},${b}); border-radius: ${db.borderRadius}px;`;
+            if (!isLast) style += ` margin-right: ${barSpacing}px;`;
+            this._trailBars[i].style = style;
+        }
+    }
+
+    // --- Decorations ---
+
+    _createDecorations(containerWidth, containerHeight) {
+        this._destroyDecorations();
+        const layers = this._currentDesign.layers || [];
+
+        // Only process widget layers (canvas layers are handled by layerPainter)
+        const widgetTypes = ['scanlines', 'frame', 'highlightStrip', 'pixelGrid'];
+        const widgetLayers = layers.filter(l => widgetTypes.includes(l.type));
+        if (widgetLayers.length === 0) return;
+
+        for (const layer of widgetLayers) {
+            let widget = null;
+            switch (layer.type) {
+                case 'scanlines':
+                    widget = this._createScanlines(layer, containerWidth, containerHeight);
+                    break;
+                case 'frame':
+                    widget = this._createFrame(layer, containerWidth, containerHeight);
+                    break;
+                case 'highlightStrip':
+                    widget = this._createHighlightStrip(layer, containerWidth, containerHeight);
+                    break;
+                case 'pixelGrid':
+                    widget = this._createPixelGrid(layer, containerWidth, containerHeight);
+                    break;
+            }
+            if (widget) {
+                if (layer.position === 'background') {
+                    // Insert behind bars (before trail/main containers)
+                    if (this._trailContainer) {
+                        this._waveWidget.insert_child_below(widget, this._trailContainer);
+                    } else {
+                        this._waveWidget.insert_child_below(widget, this._waveContainer);
+                    }
+                } else {
+                    this._waveWidget.add_child(widget);
+                }
+                this._decorationWidgets.push(widget);
+            }
+        }
+    }
+
+    _destroyDecorations() {
+        if (this._decorationWidgets) {
+            for (const w of this._decorationWidgets) {
+                w?.destroy();
+            }
+        }
+        this._decorationWidgets = [];
+    }
+
+    _createPixelGrid(dec, containerWidth, containerHeight) {
+        // pixelGrid is now created as separate chrome in _createPixelGridWidget (before blur)
+        // This method is called by _createDecorations but we return null as the widget is already created
+        return null;
+    }
+
+    _createScanlines(dec, containerWidth, containerHeight) {
+        const [cr, cg, cb] = dec.color || [0, 0, 0];
+        const alpha = Math.round((dec.alpha || 0.15) * 255);
+        const lineHeight = dec.lineHeight || 1;
+        const lineSpacing = dec.lineSpacing || 3;
+        const radius = dec.borderRadius || 0;
+
+        const box = new St.BoxLayout({
+            vertical: true,
+            style: `border-radius: ${radius}px;`,
+            clip_to_allocation: true,
+            x: 0,
+            y: 0,
+        });
+        box.set_size(containerWidth, containerHeight);
+
+        const totalLines = Math.floor(containerHeight / (lineHeight + lineSpacing));
+        for (let i = 0; i < totalLines; i++) {
+            const line = new St.Widget({
+                style: `background-color: rgb(${cr},${cg},${cb}); height: ${lineHeight}px; margin-bottom: ${lineSpacing}px;`,
+                opacity: alpha,
+            });
+            box.add_child(line);
+        }
+
+        return box;
+    }
+
+    _createFrame(dec, containerWidth, containerHeight) {
+        const [cr, cg, cb] = dec.color || [128, 128, 128];
+        const alpha = dec.alpha || 0.7;
+        const inset = dec.inset || 0;
+        const bw = dec.borderWidth || 2;
+        const radius = dec.borderRadius || 20;
+
+        const x = inset;
+        const y = inset;
+        const w = containerWidth - 2 * inset;
+        const h = containerHeight - 2 * inset;
+
+        let style = `border: ${bw}px solid rgba(${cr},${cg},${cb},${alpha}); border-radius: ${radius}px; background-color: transparent;`;
+        if (dec.shadow) {
+            style += ` box-shadow: ${dec.shadow};`;
+        }
+
+        const frame = new St.Widget({
+            style: style,
+            x: x,
+            y: y,
+        });
+        frame.set_size(w, h);
+
+        return frame;
+    }
+
+    _createHighlightStrip(dec, containerWidth, containerHeight) {
+        const [cr, cg, cb] = dec.color || [255, 255, 255];
+        const alpha = dec.alpha || 0.08;
+        const height = dec.height || 2;
+        const topOffset = dec.topOffset || 5;
+        const radius = dec.borderRadius || 20;
+        const hPad = 10;
+
+        const strip = new St.Widget({
+            style: `background-color: rgba(${cr},${cg},${cb},${alpha}); border-radius: ${radius}px;`,
+            x: hPad,
+            y: topOffset,
+        });
+        strip.set_size(containerWidth - hPad * 2, height);
+
+        return strip;
     }
 
     // --- Visualization: recording level ---
@@ -980,16 +1527,26 @@ export default class VoicifyExtension extends Extension {
     _initFlatBars() {
         if (!this._waveBars) return;
         this._currentLevel = 0;
+        this._trailLevel = 0;
+        const pivotY = this._currentDesign.bars.pivotY;
+        const scaleMin = this._currentDesign.bars.scaleMin;
         this._waveBars.forEach(bar => {
-            bar.set_pivot_point(0.5, 0.5);
-            bar.scale_y = MIN_SCALE;
+            bar.set_pivot_point(0.5, pivotY);
+            bar.scale_y = scaleMin;
         });
+        if (this._trailBars) {
+            this._trailBars.forEach(bar => {
+                bar.set_pivot_point(0.5, pivotY);
+                bar.scale_y = scaleMin;
+            });
+        }
     }
 
     _pushLevel(level) {
         if (!this._waveBars) return;
-        const amplified = Math.min(MAX_SCALE, level * this._sensitivityGain);
-        const raw = Math.max(MIN_SCALE, amplified);
+        const db = this._currentDesign.bars;
+        const amplified = Math.min(db.scaleMax, level * this._sensitivityGain);
+        const raw = Math.max(db.scaleMin, amplified);
         this._currentLevel = this._smoothingAlpha * raw + (1 - this._smoothingAlpha) * (this._currentLevel || 0);
     }
 
@@ -1009,13 +1566,32 @@ export default class VoicifyExtension extends Extension {
             const n = this._waveBars.length;
             const level = this._currentLevel;
             const center = (n - 1) / 2;
+            const db = this._currentDesign.bars;
 
             for (let i = 0; i < n; i++) {
                 const dist = Math.abs(i - center) / center;
                 const envelope = Math.exp(-dist * dist * 3);
                 const val = level * envelope;
-                this._waveBars[i].scale_y = Math.max(MIN_SCALE, Math.min(MAX_SCALE, val));
+                this._waveBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
             }
+
+            // Update trail bars (peak-hold with slow decay)
+            if (this._trailBars && this._modifier > 0) {
+                const trailDecay = 0.93 + this._modifier * 0.06;
+                if (level > this._trailLevel) {
+                    this._trailLevel = 0.4 * level + 0.6 * this._trailLevel;
+                } else {
+                    this._trailLevel = this._trailLevel * trailDecay;
+                }
+
+                for (let i = 0; i < n; i++) {
+                    const dist = Math.abs(i - center) / center;
+                    const envelope = Math.exp(-dist * dist * 3);
+                    const val = this._trailLevel * envelope;
+                    this._trailBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, val));
+                }
+            }
+
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -1026,6 +1602,7 @@ export default class VoicifyExtension extends Extension {
             this._levelTimer = null;
         }
         this._currentLevel = 0;
+        this._trailLevel = 0;
     }
 
     // --- Visualization: upload animation ---
@@ -1050,6 +1627,8 @@ export default class VoicifyExtension extends Extension {
         const transitionFrames = 20;
         const n = this._waveBars.length;
         const center = (n - 1) / 2;
+
+        const db = this._currentDesign.bars;
 
         this._uploadTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
             if (this._state !== State.UPLOADING || !this._waveBars) {
@@ -1076,10 +1655,10 @@ export default class VoicifyExtension extends Extension {
                 const dist = Math.abs(i - center) / center;
                 const envelope = 0.7 + 0.3 * Math.exp(-dist * dist * 2);
                 const wave = w1 * 0.3 + w2 * 0.2;
-                const dnaScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, (0.45 + wave) * envelope));
+                const dnaScale = Math.max(db.scaleMin, Math.min(db.scaleMax, (0.45 + wave) * envelope));
 
                 const scale = startScales[i] * (1 - ease) + dnaScale * ease;
-                this._waveBars[i].scale_y = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+                this._waveBars[i].scale_y = Math.max(db.scaleMin, Math.min(db.scaleMax, scale));
             }
 
             time += 0.1;

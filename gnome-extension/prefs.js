@@ -7,8 +7,10 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { loadDesigns, getDesignIds } from './designLoader.js';
+import * as LayerPainter from './layerPainter.js';
 
-// Duplicated from extension.js (prefs.js runs in a different process)
+// Color themes (duplicated from extension.js - prefs.js runs in a different process)
 const THEMES = {
     'mint-dream':  { name: 'Mint Dream',  center: {r: 94,  g: 240, b: 218}, edge: {r: 70,  g: 160, b: 255} },
     'ocean':       { name: 'Ocean',       center: {r: 0,   g: 229, b: 255}, edge: {r: 83,  g: 109, b: 254} },
@@ -20,6 +22,7 @@ const THEMES = {
     'ember':       { name: 'Ember',       center: {r: 239, g: 83,  b: 80},  edge: {r: 255, g: 143, b: 0}   },
     'twilight':    { name: 'Twilight',    center: {r: 179, g: 157, b: 219}, edge: {r: 92,  g: 107, b: 192} },
     'graphite':    { name: 'Graphite',    center: {r: 189, g: 189, b: 189}, edge: {r: 120, g: 144, b: 156} },
+    'phosphor':    { name: 'Phosphor',   center: {r: 50,  g: 255, b: 80},  edge: {r: 20,  g: 160, b: 40}  },
 };
 
 const THEME_IDS = Object.keys(THEMES);
@@ -49,6 +52,9 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         const settings = this.getSettings();
         let animTimerId = null;
         const settingsHandlerIds = [];
+
+        const designs = loadDesigns(this.path);
+        const DESIGN_IDS = getDesignIds(designs);
 
         const page = new Adw.PreferencesPage({
             title: 'Appearance',
@@ -85,6 +91,36 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         });
         themeGroup.add(themeRow);
 
+        // Design style combo
+        const designModel = new Gtk.StringList();
+        for (const id of DESIGN_IDS) {
+            designModel.append(designs.get(id).name);
+        }
+
+        const designRow = new Adw.ComboRow({
+            title: 'Design Style',
+            subtitle: 'Visual rendering style for the waveform',
+            model: designModel,
+        });
+
+        const currentDesignId = settings.get_string('wave-design');
+        const currentDesignIdx = DESIGN_IDS.indexOf(currentDesignId);
+        if (currentDesignIdx >= 0) designRow.set_selected(currentDesignIdx);
+
+        designRow.connect('notify::selected', () => {
+            const idx = designRow.get_selected();
+            if (idx >= 0 && idx < DESIGN_IDS.length) {
+                const id = DESIGN_IDS[idx];
+                settings.set_string('wave-design', id);
+                const design = designs.get(id);
+                if (design && design.defaultTheme && THEMES[design.defaultTheme]) {
+                    settings.set_string('wave-theme', design.defaultTheme);
+                }
+                previewArea.queue_draw();
+            }
+        });
+        themeGroup.add(designRow);
+
         // --- Size (created early so drawPreview can reference sizeRow) ---
         const sizeModel = new Gtk.StringList();
         sizeModel.append('Thin');
@@ -118,45 +154,158 @@ export default class VoicifyPreferences extends ExtensionPreferences {
             const themeId = THEME_IDS[themeIdx] || 'mint-dream';
             const theme = THEMES[themeId];
 
+            const designIdx = designRow.get_selected();
+            const designId = DESIGN_IDS[designIdx] || 'modern';
+            const design = designs.get(designId) || designs.values().next().value;
+            const dc = design.container;
+            const db = design.bars;
+
             const sizeIdx = sizeRow.get_selected();
             const sizeId = SIZE_IDS[sizeIdx] || 'medium';
             const size = SIZES[sizeId];
 
             const { barWidth, barSpacing, numBars, containerHeight } = size;
-            const totalWidth = numBars * (barWidth + barSpacing);
+            const widthAdj = db.widthAdjust || 0;
+            const effectiveBarWidth = barWidth + widthAdj;
+            const totalBarWidth = numBars * (effectiveBarWidth + barSpacing) - barSpacing;
             const barHeight = (containerHeight / 2) + 1;
-            const offsetX = (width - totalWidth) / 2;
-            const centerY = height / 2;
 
-            const bgRadius = 12;
-            cr.setSourceRGBA(0.12, 0.12, 0.14, 1);
-            _roundedRect(cr, 0, 0, width, height, bgRadius);
-            cr.fill();
+            // Container dimensions matching actual widget
+            const hPad = 14;
+            const vPad = 10;
+            const containerW = Math.min(width - 8, totalBarWidth + hPad * 2);
+            const containerH = Math.min(height - 8, containerHeight + vPad * 2);
+            const containerX = (width - containerW) / 2;
+            const containerY = (height - containerH) / 2;
+            const offsetX = containerX + (containerW - totalBarWidth) / 2;
+            const centerY = containerY + containerH / 2;
+
+            // Blur hint (frosted background simulation for Glass design)
+            if (dc.blur) {
+                const bgRadius = Math.min(containerH / 2, dc.borderRadius * (containerH / 76));
+                cr.setSourceRGBA(0.7, 0.7, 0.75, 0.35);
+                _roundedRect(cr, containerX, containerY, containerW, containerH, bgRadius);
+                cr.fill();
+            }
+
+            // Draw all canvas layers (shadow, background, innerHighlight, specularHighlight, innerShadow, border)
+            LayerPainter.drawAllCanvasLayersAt(cr, design, theme, containerX, containerY, containerW, containerH);
+
+            // Bar colors
+            let barCenter_c, barEdge_c;
+            if (db.colorOverride) {
+                const co = db.colorOverride;
+                barCenter_c = { r: co.center[0], g: co.center[1], b: co.center[2] };
+                barEdge_c = { r: co.edge[0], g: co.edge[1], b: co.edge[2] };
+            } else {
+                barCenter_c = { ...theme.center };
+                barEdge_c = { ...theme.edge };
+            }
+
+            const mute = db.colorMute || 0;
+            if (mute > 0) {
+                const gray = { r: 160, g: 160, b: 160 };
+                barCenter_c = _blendColor(barCenter_c, gray, mute);
+                barEdge_c = _blendColor(barEdge_c, gray, mute);
+            }
 
             const barCenter = (numBars - 1) / 2;
+            const barRadius = Math.min(effectiveBarWidth / 2, db.borderRadius);
+            const pivotY = db.pivotY;
+
+            // Trail bars (drawn behind main bars when modifier > 0)
+            const modifier = settings.get_int('wave-modifier') / 100;
+            if (modifier > 0) {
+                const trailAlpha = modifier * 0.45;
+                const trailPhase = animPhase - 0.6;
+                for (let i = 0; i < numBars; i++) {
+                    const dist = Math.abs(i - barCenter) / barCenter;
+                    const r = (barCenter_c.r + (barEdge_c.r - barCenter_c.r) * dist) / 255 * 0.7;
+                    const g = (barCenter_c.g + (barEdge_c.g - barCenter_c.g) * dist) / 255 * 0.7;
+                    const b = (barCenter_c.b + (barEdge_c.b - barCenter_c.b) * dist) / 255 * 0.7;
+
+                    const envelope = Math.exp(-dist * dist * 3);
+                    const wave = Math.sin(trailPhase + i * 0.3) * 0.5 + 0.5;
+                    const scale = (0.3 + wave * 0.7) * envelope;
+                    const h = Math.max(2, barHeight * scale);
+                    const x = offsetX + i * (effectiveBarWidth + barSpacing);
+
+                    let barY, barH;
+                    if (pivotY === 1.0) {
+                        const barBottom = containerY + containerH - 4;
+                        barH = h * 2;
+                        barY = barBottom - barH;
+                    } else {
+                        barH = h * 2;
+                        barY = centerY - h;
+                    }
+
+                    cr.setSourceRGBA(r, g, b, trailAlpha);
+                    _roundedRect(cr, x, barY, effectiveBarWidth, barH, barRadius);
+                    cr.fill();
+                }
+            }
 
             for (let i = 0; i < numBars; i++) {
                 const dist = Math.abs(i - barCenter) / barCenter;
-                const r = (theme.center.r + (theme.edge.r - theme.center.r) * dist) / 255;
-                const g = (theme.center.g + (theme.edge.g - theme.center.g) * dist) / 255;
-                const b = (theme.center.b + (theme.edge.b - theme.center.b) * dist) / 255;
-                const alpha = 0.3 + 0.7 * (1 - dist);
+                const r = (barCenter_c.r + (barEdge_c.r - barCenter_c.r) * dist) / 255;
+                const g = (barCenter_c.g + (barEdge_c.g - barCenter_c.g) * dist) / 255;
+                const b = (barCenter_c.b + (barEdge_c.b - barCenter_c.b) * dist) / 255;
+
+                let alpha;
+                if (db.opacityMode === 'uniform') {
+                    alpha = (db.opacityUniform || 255) / 255;
+                } else {
+                    const oMin = (db.opacityMin || 80) / 255;
+                    const oMax = (db.opacityMax || 255) / 255;
+                    alpha = oMin + (oMax - oMin) * (1 - dist);
+                }
 
                 const envelope = Math.exp(-dist * dist * 3);
                 const wave = Math.sin(animPhase + i * 0.3) * 0.5 + 0.5;
                 const scale = (0.2 + wave * 0.8) * envelope;
                 const h = Math.max(2, barHeight * scale);
 
-                const x = offsetX + i * (barWidth + barSpacing);
+                const x = offsetX + i * (effectiveBarWidth + barSpacing);
+
+                // Bar position based on pivot mode
+                let barY, barH;
+                if (pivotY === 1.0) {
+                    // Bars grow upward from bottom of container
+                    const barBottom = containerY + containerH - 4;
+                    barH = h * 2;
+                    barY = barBottom - barH;
+                } else {
+                    // Bars grow from center (symmetric)
+                    barH = h * 2;
+                    barY = centerY - h;
+                }
+
+                // Glow effect
+                if (db.glowFromTheme) {
+                    cr.setSourceRGBA(r, g, b, alpha * 0.3);
+                    _roundedRect(cr, x - 1, barY - 1, effectiveBarWidth + 2, barH + 2, barRadius + 1);
+                    cr.fill();
+                }
 
                 cr.setSourceRGBA(r, g, b, alpha);
-
-                const barRadius = Math.min(barWidth / 2, 2);
-                _roundedRect(cr, x, centerY - h, barWidth, h, barRadius);
+                _roundedRect(cr, x, barY, effectiveBarWidth, barH, barRadius);
                 cr.fill();
+            }
 
-                _roundedRect(cr, x, centerY, barWidth, h, barRadius);
-                cr.fill();
+            // Scanlines hint from layers
+            const layers = design.layers || [];
+            for (const layer of layers) {
+                if (layer.type === 'scanlines') {
+                    const [slr, slg, slb] = layer.color || [0, 0, 0];
+                    const sla = layer.alpha || 0.15;
+                    const lineSpacing = layer.lineSpacing || 3;
+                    cr.setSourceRGBA(slr / 255, slg / 255, slb / 255, sla);
+                    for (let ly = containerY + 2; ly < containerY + containerH - 2; ly += lineSpacing + 1) {
+                        cr.rectangle(containerX + 2, ly, containerW - 4, 1);
+                        cr.fill();
+                    }
+                }
             }
         };
 
@@ -170,22 +319,22 @@ export default class VoicifyPreferences extends ExtensionPreferences {
             return GLib.SOURCE_CONTINUE;
         });
 
-        // Background opacity slider
-        const bgOpacityRow = new Adw.ActionRow({
-            title: 'Background',
-            subtitle: 'Opacity of the dark backdrop behind bars',
+        // Modifier slider (visual effects intensity)
+        const modifierRow = new Adw.ActionRow({
+            title: 'Modifier',
+            subtitle: 'Shadow trail effect intensity',
         });
 
-        const bgAdj = new Gtk.Adjustment({
+        const modAdj = new Gtk.Adjustment({
             lower: 0,
             upper: 100,
             step_increment: 1,
             page_increment: 10,
-            value: settings.get_int('wave-bg-opacity'),
+            value: settings.get_int('wave-modifier'),
         });
 
-        const bgScale = new Gtk.Scale({
-            adjustment: bgAdj,
+        const modScale = new Gtk.Scale({
+            adjustment: modAdj,
             orientation: Gtk.Orientation.HORIZONTAL,
             draw_value: false,
             hexpand: true,
@@ -193,12 +342,13 @@ export default class VoicifyPreferences extends ExtensionPreferences {
             width_request: 200,
         });
 
-        bgScale.connect('value-changed', () => {
-            settings.set_int('wave-bg-opacity', Math.round(bgScale.get_value()));
+        modScale.connect('value-changed', () => {
+            settings.set_int('wave-modifier', Math.round(modScale.get_value()));
+            previewArea.queue_draw();
         });
 
-        bgOpacityRow.add_suffix(bgScale);
-        themeGroup.add(bgOpacityRow);
+        modifierRow.add_suffix(modScale);
+        themeGroup.add(modifierRow);
 
         // --- Size group (add to UI) ---
         const sizeGroup = new Adw.PreferencesGroup({
@@ -465,9 +615,24 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         );
 
         settingsHandlerIds.push(
+            settings.connect('changed::wave-design', () => {
+                const idx = DESIGN_IDS.indexOf(settings.get_string('wave-design'));
+                if (idx >= 0) designRow.set_selected(idx);
+                previewArea.queue_draw();
+            })
+        );
+
+        settingsHandlerIds.push(
             settings.connect('changed::wave-position', () => {
                 currentPosition = settings.get_string('wave-position');
                 positionArea.queue_draw();
+            })
+        );
+
+        settingsHandlerIds.push(
+            settings.connect('changed::wave-modifier', () => {
+                modAdj.set_value(settings.get_int('wave-modifier'));
+                previewArea.queue_draw();
             })
         );
 
@@ -486,16 +651,17 @@ export default class VoicifyPreferences extends ExtensionPreferences {
     }
 }
 
-// Helper: draw a rounded rectangle
-function _roundedRect(cr, x, y, w, h, r) {
-    r = Math.min(r, w / 2, h / 2);
-    cr.newPath();
-    cr.arc(x + r, y + r, r, Math.PI, 1.5 * Math.PI);
-    cr.arc(x + w - r, y + r, r, 1.5 * Math.PI, 2 * Math.PI);
-    cr.arc(x + w - r, y + h - r, r, 0, 0.5 * Math.PI);
-    cr.arc(x + r, y + h - r, r, 0.5 * Math.PI, Math.PI);
-    cr.closePath();
+// Helper: blend two {r,g,b} colors
+function _blendColor(a, b, t) {
+    return {
+        r: Math.round(a.r + (b.r - a.r) * t),
+        g: Math.round(a.g + (b.g - a.g) * t),
+        b: Math.round(a.b + (b.b - a.b) * t),
+    };
 }
+
+// Alias for layerPainter's rounded rect (used in bar rendering and position preview)
+const _roundedRect = LayerPainter.cairoRoundedRect;
 
 // Helper: add an editable shortcut row
 function _addShortcutRow(group, title, settingKey, settings, window) {

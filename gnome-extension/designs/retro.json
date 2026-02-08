@@ -1,0 +1,33 @@
+{
+    "name": "Retro",
+    "sortOrder": 7,
+    "defaultTheme": "phosphor",
+    "uploadHueShift": -67,
+    "container": {
+        "borderRadius": 4,
+        "bgColor": [2, 8, 3],
+        "bgOpacity": 0.92
+    },
+    "bars": {
+        "borderRadius": 0,
+        "shadow": null,
+        "opacityMode": "uniform",
+        "opacityUniform": 255,
+        "pivotY": 1.0,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": true,
+        "glowRadius": 6,
+        "glowAlpha": 0.7,
+        "highlight": false,
+        "widthAdjust": 1,
+        "colorMute": 0,
+        "colorOverride": null
+    },
+    "layers": [
+        {"type": "shadow", "x": 0, "y": 4, "blur": 16, "color": [0, 0, 0], "alpha": 0.7},
+        {"type": "border", "width": 2, "source": "theme", "alpha": 0.5},
+        {"type": "pixelGrid", "position": "background", "colorSource": "theme", "alpha": 0.12},
+        {"type": "scanlines", "lineHeight": 1, "lineSpacing": 3, "color": [0, 0, 0], "alpha": 0.15, "borderRadius": 4}
+    ]
+}

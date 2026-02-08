@@ -6,6 +6,11 @@
       <summary>Waveform visualization theme</summary>
       <description>Color theme for the waveform visualization bars</description>
     </key>
+    <key name="wave-design" type="s">
+      <default>'modern'</default>
+      <summary>Waveform design style</summary>
+      <description>Visual style preset loaded from designs/ directory (modern, glass, minimal, neon, skeuomorphic, neumorphic, retro, brutalist, material)</description>
+    </key>
     <key name="wave-size" type="s">
       <default>'medium'</default>
       <summary>Waveform visualization size</summary>
@@ -13,8 +18,14 @@
     </key>
     <key name="wave-bg-opacity" type="i">
       <default>25</default>
-      <summary>Waveform background opacity</summary>
-      <description>Background opacity percentage (0=transparent, 100=opaque)</description>
+      <summary>Waveform background opacity (legacy)</summary>
+      <description>Legacy key, replaced by wave-modifier. Background opacity is now per-design.</description>
+      <range min="0" max="100"/>
+    </key>
+    <key name="wave-modifier" type="i">
+      <default>0</default>
+      <summary>Waveform modifier intensity</summary>
+      <description>Controls visual effects intensity such as shadow trail (0=none, 100=maximum)</description>
       <range min="0" max="100"/>
     </key>
     <key name="wave-position" type="s">

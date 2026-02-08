@@ -1,0 +1,26 @@
+{
+    "name": "Modern",
+    "sortOrder": 1,
+    "defaultTheme": "mint-dream",
+    "container": {
+        "borderRadius": 30,
+        "bgColor": [0, 0, 0],
+        "bgOpacity": 0.25
+    },
+    "bars": {
+        "borderRadius": 2,
+        "shadow": "0 0 4px rgba(0,0,0,0.4)",
+        "opacityMode": "gradient",
+        "opacityMin": 80,
+        "opacityMax": 255,
+        "pivotY": 0.5,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "highlight": false,
+        "widthAdjust": 0,
+        "colorMute": 0,
+        "colorOverride": null
+    },
+    "layers": []
+}

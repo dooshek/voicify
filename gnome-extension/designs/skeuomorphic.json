@@ -1,0 +1,30 @@
+{
+    "name": "Skeuomorphic",
+    "sortOrder": 5,
+    "defaultTheme": "ember",
+    "container": {
+        "borderRadius": 18,
+        "bgColor": [0, 0, 0],
+        "bgOpacity": 0.60
+    },
+    "bars": {
+        "borderRadius": 3,
+        "shadow": "0 1px 2px rgba(0,0,0,0.35)",
+        "opacityMode": "gradient",
+        "opacityMin": 60,
+        "opacityMax": 255,
+        "pivotY": 1.0,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "highlight": true,
+        "widthAdjust": 0,
+        "colorMute": 0,
+        "colorOverride": null
+    },
+    "layers": [
+        {"type": "shadow", "x": 0, "y": 2, "blur": 6, "color": [0, 0, 0], "alpha": 0.35},
+        {"type": "border", "width": 2, "color": [70, 70, 80], "alpha": 0.6},
+        {"type": "innerShadow", "color": [0, 0, 0], "alpha": 0.15, "blur": 4}
+    ]
+}

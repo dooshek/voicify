@@ -1,0 +1,28 @@
+{
+    "name": "Brutalist",
+    "sortOrder": 8,
+    "defaultTheme": "graphite",
+    "container": {
+        "borderRadius": 0,
+        "bgColor": [240, 237, 228],
+        "bgOpacity": 0.60
+    },
+    "bars": {
+        "borderRadius": 0,
+        "shadow": null,
+        "opacityMode": "uniform",
+        "opacityUniform": 255,
+        "pivotY": 0.5,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "highlight": false,
+        "widthAdjust": 3,
+        "colorMute": 0,
+        "colorOverride": {"center": [15, 15, 15], "edge": [50, 50, 50]}
+    },
+    "layers": [
+        {"type": "shadow", "x": 5, "y": 5, "blur": 0, "color": [0, 0, 0], "alpha": 0.85},
+        {"type": "border", "width": 4, "color": [15, 15, 15], "alpha": 1.0}
+    ]
+}

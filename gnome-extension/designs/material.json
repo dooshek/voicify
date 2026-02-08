@@ -1,0 +1,27 @@
+{
+    "name": "Material",
+    "sortOrder": 9,
+    "defaultTheme": "coral",
+    "container": {
+        "borderRadius": 16,
+        "bgColor": [40, 40, 50],
+        "bgOpacity": 0.85
+    },
+    "bars": {
+        "borderRadius": 2,
+        "shadow": null,
+        "opacityMode": "uniform",
+        "opacityUniform": 255,
+        "pivotY": 0.5,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "highlight": false,
+        "widthAdjust": 0,
+        "colorMute": 0,
+        "colorOverride": null
+    },
+    "layers": [
+        {"type": "shadow", "x": 0, "y": 4, "blur": 16, "color": [0, 0, 0], "alpha": 0.3}
+    ]
+}

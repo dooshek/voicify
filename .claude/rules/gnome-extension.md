@@ -162,6 +162,22 @@ journalctl --user -u gnome-shell -f | grep -i voicify
 # Wayland: logout/login (jedyny sposób)
 ```
 
+## Clutter.Canvas - pułapki
+
+- **NIGDY** nie twórz drugiego `Clutter.Canvas` + `Clutter.Actor` obok istniejącego bgCanvas
+  - Powoduje cichy crash w `addChrome()` - widget nie pojawi się, bez error w logach
+  - Rozwiązanie: rysuj dodatkowe efekty (np. pixelGrid) w draw handlerze wspólnego bgCanvas
+  - Wzorzec: `_drawPixelGridOnCanvas(cr, layer, w, h)` wywoływane z bgCanvas draw callback
+- `canvas.invalidate()` może wywołać draw handler synchronicznie - exception propaguje się do callera
+- `cr.setOperator(1)` = `Cairo.Operator.SOURCE` - OK w GJS/GNOME Shell
+- Owijaj `_createDecorations()` w try/catch - safety net dla widget layer errors
+
+## Screenshotowanie do testów
+
+- D-Bus `org.gnome.Shell.Screenshot.Screenshot` jest **zablokowany** (permission denied)
+- Użyj ImageMagick: `import -window root output.png`
+- Crop + zoom: `magick input.png -gravity South -crop 400x60+0+40 +repage -resize 400% output.png`
+
 ## Troubleshooting
 
 1. **ZAWSZE** najpierw sprawdź logi: `journalctl --user --since "5 min ago" -p err | grep voicify`

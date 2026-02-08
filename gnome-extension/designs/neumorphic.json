@@ -1,0 +1,29 @@
+{
+    "name": "Neumorphic",
+    "sortOrder": 6,
+    "defaultTheme": "twilight",
+    "container": {
+        "borderRadius": 24,
+        "bgColor": [180, 180, 195],
+        "bgOpacity": 0.45
+    },
+    "bars": {
+        "borderRadius": 4,
+        "shadow": "0 1px 3px rgba(0,0,0,0.25)",
+        "opacityMode": "uniform",
+        "opacityUniform": 230,
+        "pivotY": 0.5,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "highlight": false,
+        "widthAdjust": 0,
+        "colorMute": 0.25,
+        "colorOverride": null
+    },
+    "layers": [
+        {"type": "shadow", "x": 5, "y": 5, "blur": 12, "color": [0, 0, 0], "alpha": 0.35},
+        {"type": "shadow", "x": -4, "y": -4, "blur": 10, "color": [255, 255, 255], "alpha": 0.6},
+        {"type": "border", "width": 1, "color": [255, 255, 255], "alpha": 0.15}
+    ]
+}

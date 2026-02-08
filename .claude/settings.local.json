@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(deploy-extension)",
+      "Bash(gdbus call:*)",
+      "Bash(pkill:*)",
+      "Bash(pgrep:*)",
+      "Bash(chmod:*)",
+      "Bash(/home/dooshek/projects/voicify/main/deploy.sh:*)",
+      "Bash(bash:*)",
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat\\(extension\\): full Settings UI, configurable shortcuts, waveform customization\n\n- Settings window \\(prefs.js\\): theme picker with animated Cairo preview,\n  size selector \\(thin/medium/large\\), position picker \\(3x3 grid with Cairo\\),\n  responsiveness/smoothing/sensitivity sliders, background opacity slider,\n  editable keyboard shortcuts with click-to-capture UI\n- Configurable shortcuts via GSettings: realtime, post-autopaste,\n  post-router, cancel \\(Ctrl+Super+X\\) - live re-grab on change\n- Panel menu: recording mode items with shortcut labels, clickable to trigger\n- Custom SVG waveform icon \\(static, colored by theme during recording/upload\\)\n- Wave widget: semi-transparent rounded background, 9 screen positions\n- Fix: accelerator-activated handler leak \\(single handler instead of 3\\)\n- Fix: D-Bus signal subscriptions disconnected in disable\\(\\)\n- Fix: fire-and-forget paste timers tracked for cleanup\n- Fix: timer IDs nulled on GLib.SOURCE_REMOVE\n- Removed theme submenu from panel dropdown \\(moved to Settings\\)\n- Removed unused CSS icon state classes\n\nCo-Authored-By: Claude Opus 4.6 \\(1M context\\) <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit:*)",
+      "WebSearch",
+      "Bash(find:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:gitlab.gnome.org)",
+      "WebFetch(domain:mutter.gnome.org)",
+      "WebFetch(domain:gjs.guide)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(busctl --user list:*)",
+      "WebFetch(domain:dribbble.com)",
+      "Bash(python3:*)",
+      "Bash(# Check GNOME Screenshot D-Bus - might need different API on GNOME 49 gdbus introspect --session --dest=org.gnome.Shell --object-path=/org/gnome/Shell/Screenshot)",
+      "Bash(gdbus introspect:*)",
+      "Bash(gsettings:*)",
+      "Bash(import:*)",
+      "Bash(magick:*)",
+      "Bash(SCHEMA=/home/dooshek/.local/share/gnome-shell/extensions/voicify@dooshek.com/schemas/:*)"
+    ]
+  }
+}

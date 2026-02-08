@@ -1,0 +1,25 @@
+{
+    "name": "Minimal",
+    "sortOrder": 3,
+    "defaultTheme": "graphite",
+    "container": {
+        "borderRadius": 4,
+        "bgColor": [0, 0, 0],
+        "bgOpacity": 0.0
+    },
+    "bars": {
+        "borderRadius": 1,
+        "shadow": null,
+        "opacityMode": "uniform",
+        "opacityUniform": 255,
+        "pivotY": 1.0,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "highlight": false,
+        "widthAdjust": -1,
+        "colorMute": 0,
+        "colorOverride": null
+    },
+    "layers": []
+}
