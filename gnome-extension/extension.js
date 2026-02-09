@@ -11,7 +11,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import { loadDesigns } from './designLoader.js';
+import { loadDesigns, applyOverrides } from './designLoader.js';
 import * as LayerPainter from './layerPainter.js';
 
 // Size variants
@@ -137,7 +137,7 @@ export default class VoicifyExtension extends Extension {
         this._settingsChangedIds = [];
         this._currentTheme = THEMES['mint-dream'];
         this._designs = loadDesigns(this.path);
-        this._currentDesign = this._designs.get('modern') || this._designs.values().next().value;
+        this._currentDesign = this._designs.get('gnome') || this._designs.values().next().value;
         this._currentSize = SIZES['medium'];
         this._decorationWidgets = [];
         this._blurWidget = null;
@@ -182,7 +182,13 @@ export default class VoicifyExtension extends Extension {
             this._settings.connect('changed::wave-theme', () => this._applyTheme())
         );
         this._settingsChangedIds.push(
-            this._settings.connect('changed::wave-design', () => this._applyDesign())
+            this._settings.connect('changed::wave-design', () => {
+                this._applyDesign();
+                // Reset width/height to design defaults when switching design
+                const dc = this._currentDesign.container;
+                this._settings.set_int('wave-width', dc.defaultWidth || 100);
+                this._settings.set_int('wave-height', dc.defaultHeight || 100);
+            })
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-size', () => this._applySize())
@@ -213,6 +219,9 @@ export default class VoicifyExtension extends Extension {
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::wave-height', () => this._applyHeight())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::design-overrides', () => this._applyDesign())
         );
 
         // Shortcut change handlers
@@ -487,15 +496,12 @@ export default class VoicifyExtension extends Extension {
     _applyDesign() {
         const designId = this._settings
             ? this._settings.get_string('wave-design')
-            : 'modern';
-        this._currentDesign = this._designs.get(designId) || this._designs.values().next().value;
-
-        // Reset width/height to design defaults only when user switches design (not on initial enable)
-        if (!this._isInitializing && this._settings) {
-            const dc = this._currentDesign.container;
-            this._settings.set_int('wave-width', dc.defaultWidth || 100);
-            this._settings.set_int('wave-height', dc.defaultHeight || 100);
-        }
+            : 'gnome';
+        const baseDesign = this._designs.get(designId) || this._designs.values().next().value;
+        const overridesJson = this._settings
+            ? this._settings.get_string('design-overrides')
+            : '{}';
+        this._currentDesign = applyOverrides(baseDesign, overridesJson, designId);
 
         // Rebuild widget if visible (preserve position)
         if (this._waveWidget && this._state === State.RECORDING) {
@@ -1314,14 +1320,14 @@ export default class VoicifyExtension extends Extension {
         const shadowPad = this._shadowPad || 0;
 
         const monitor = Main.layoutManager.primaryMonitor;
-        const panelHeight = Main.panel.height;
 
+        // Usable area is full monitor (widget can be anywhere, including behind panel)
         const usableW = monitor.width - containerWidth;
-        const usableH = monitor.height - panelHeight - containerHeight;
+        const usableH = monitor.height - containerHeight;
 
-        // Content area position
+        // Content area position (0,0 = top-left of monitor, 1,1 = bottom-right)
         const contentX = monitor.x + Math.max(0, usableW) * this._posX;
-        const contentY = monitor.y + panelHeight + Math.max(0, usableH) * this._posY;
+        const contentY = monitor.y + Math.max(0, usableH) * this._posY;
 
         // waveWidget is larger by shadowPad on each side
         this._waveWidget.set_position(Math.round(contentX - shadowPad), Math.round(contentY - shadowPad));
@@ -1333,19 +1339,19 @@ export default class VoicifyExtension extends Extension {
         const shadowPad = this._shadowPad || 0;
 
         const monitor = Main.layoutManager.primaryMonitor;
-        const panelHeight = Main.panel.height;
         // Content dimensions (without shadow padding)
         const containerWidth = this._waveWidget.width - shadowPad * 2;
         const containerHeight = this._waveWidget.height - shadowPad * 2;
 
+        // Usable area is full monitor
         const usableW = monitor.width - containerWidth;
-        const usableH = monitor.height - panelHeight - containerHeight;
+        const usableH = monitor.height - containerHeight;
 
         // Content position = waveWidget position + shadowPad
         const contentX = this._waveWidget.x + shadowPad;
         const contentY = this._waveWidget.y + shadowPad;
         const posX = usableW > 0 ? (contentX - monitor.x) / usableW : 0.5;
-        const posY = usableH > 0 ? (contentY - monitor.y - panelHeight) / usableH : 0.5;
+        const posY = usableH > 0 ? (contentY - monitor.y) / usableH : 0.5;
 
         this._posX = Math.max(0, Math.min(1, posX));
         this._posY = Math.max(0, Math.min(1, posY));
@@ -1357,15 +1363,15 @@ export default class VoicifyExtension extends Extension {
         if (!this._waveWidget) return;
         const shadowPad = this._shadowPad || 0;
         const monitor = Main.layoutManager.primaryMonitor;
-        const panelHeight = Main.panel.height;
         const containerWidth = this._waveWidget.width - shadowPad * 2;
         const containerHeight = this._waveWidget.height - shadowPad * 2;
+        // Usable area is full monitor
         const usableW = monitor.width - containerWidth;
-        const usableH = monitor.height - panelHeight - containerHeight;
+        const usableH = monitor.height - containerHeight;
         const contentX = this._waveWidget.x + shadowPad;
         const contentY = this._waveWidget.y + shadowPad;
         this._posX = usableW > 0 ? Math.max(0, Math.min(1, (contentX - monitor.x) / usableW)) : 0.5;
-        this._posY = usableH > 0 ? Math.max(0, Math.min(1, (contentY - monitor.y - panelHeight) / usableH)) : 0.5;
+        this._posY = usableH > 0 ? Math.max(0, Math.min(1, (contentY - monitor.y) / usableH)) : 0.5;
     }
 
     _rebuildWaveWidget() {

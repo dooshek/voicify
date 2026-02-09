@@ -48,7 +48,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
 
         // --- Style group ---
         const styleGroup = new Adw.PreferencesGroup({
-            title: 'Style',
+            title: 'Theme',
             description: 'Use keyboard shortcuts to start recording and see the visualization live',
         });
         page.add(styleGroup);
@@ -60,7 +60,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         }
 
         const designRow = new Adw.ComboRow({
-            title: 'Design',
+            title: 'Style',
             subtitle: 'Visual rendering style for the waveform',
             model: designModel,
         });
@@ -362,6 +362,65 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         _addShortcutRow(shortcutsGroup, 'Post + router', 'shortcut-post-router', settings, window);
         _addShortcutRow(shortcutsGroup, 'Cancel', 'shortcut-cancel', settings, window);
 
+        // --- Other group ---
+        const otherGroup = new Adw.PreferencesGroup({ title: 'Other' });
+        page.add(otherGroup);
+
+        const advancedRow = new Adw.SwitchRow({
+            title: 'Advanced Settings',
+            subtitle: 'Fine-tune all parameters of the current style',
+        });
+        settings.bind('advanced-settings', advancedRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        otherGroup.add(advancedRow);
+
+        // Advanced settings panel state
+        let advancedGroups = [];
+
+        const destroyAdvancedGroups = () => {
+            for (const g of advancedGroups) {
+                page.remove(g);
+            }
+            advancedGroups = [];
+        };
+
+        const buildAdvancedGroups = () => {
+            destroyAdvancedGroups();
+            const designId = settings.get_string('wave-design');
+            const design = designs.get(designId);
+            if (!design) return;
+
+            const groups = _buildAdvancedGroups(settings, designs, designId);
+            for (const g of groups) {
+                page.add(g);
+            }
+            advancedGroups = groups;
+        };
+
+        // Initial build if already enabled
+        if (settings.get_boolean('advanced-settings')) {
+            buildAdvancedGroups();
+        }
+
+        // Toggle Advanced ON/OFF
+        settingsHandlerIds.push(
+            settings.connect('changed::advanced-settings', () => {
+                if (settings.get_boolean('advanced-settings')) {
+                    buildAdvancedGroups();
+                } else {
+                    destroyAdvancedGroups();
+                }
+            })
+        );
+
+        // Rebuild when design changes + advanced is ON
+        settingsHandlerIds.push(
+            settings.connect('changed::wave-design', () => {
+                if (settings.get_boolean('advanced-settings')) {
+                    buildAdvancedGroups();
+                }
+            })
+        );
+
         // External settings change listeners
         settingsHandlerIds.push(
             settings.connect('changed::wave-theme', () => {
@@ -490,6 +549,394 @@ function _addShortcutRow(group, title, settingKey, settings, window) {
 
     row.add_suffix(button);
     group.add(row);
+}
+
+// --- Advanced settings helpers ---
+
+function _getOverride(settings, designId, path, defaultVal) {
+    let all;
+    try {
+        all = JSON.parse(settings.get_string('design-overrides') || '{}');
+    } catch (e) {
+        all = {};
+    }
+    const o = all[designId];
+    if (!o) return defaultVal;
+
+    const parts = path.split('.');
+    let cur = o;
+    for (const p of parts) {
+        if (cur === undefined || cur === null) return defaultVal;
+        cur = cur[p];
+    }
+    return cur !== undefined ? cur : defaultVal;
+}
+
+function _setOverride(settings, designId, path, value) {
+    let all;
+    try {
+        all = JSON.parse(settings.get_string('design-overrides') || '{}');
+    } catch (e) {
+        all = {};
+    }
+    if (!all[designId]) all[designId] = {};
+
+    const parts = path.split('.');
+    let cur = all[designId];
+    for (let i = 0; i < parts.length - 1; i++) {
+        if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+        cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = value;
+
+    settings.set_string('design-overrides', JSON.stringify(all));
+}
+
+function _deleteOverrides(settings, designId) {
+    let all;
+    try {
+        all = JSON.parse(settings.get_string('design-overrides') || '{}');
+    } catch (e) {
+        all = {};
+    }
+    delete all[designId];
+    settings.set_string('design-overrides', JSON.stringify(all));
+}
+
+function _buildAdvancedGroups(settings, designs, designId) {
+    const design = designs.get(designId);
+    if (!design) return [];
+
+    const groups = [];
+
+    // --- Container group ---
+    const containerGroup = new Adw.PreferencesGroup({ title: 'Container' });
+    groups.push(containerGroup);
+
+    const dc = design.container;
+
+    // Border Radius
+    const contRadiusRow = new Adw.SpinRow({
+        title: 'Border Radius',
+        adjustment: new Gtk.Adjustment({
+            lower: 0, upper: 60, step_increment: 1, page_increment: 5,
+            value: _getOverride(settings, designId, 'container.borderRadius', dc.borderRadius),
+        }),
+    });
+    contRadiusRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'container.borderRadius', contRadiusRow.get_value());
+    });
+    containerGroup.add(contRadiusRow);
+
+    // Background Opacity
+    const contOpacityRow = new Adw.SpinRow({
+        title: 'Background Opacity',
+        digits: 2,
+        adjustment: new Gtk.Adjustment({
+            lower: 0.0, upper: 1.0, step_increment: 0.05, page_increment: 0.1,
+            value: _getOverride(settings, designId, 'container.bgOpacity', dc.bgOpacity),
+        }),
+    });
+    contOpacityRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'container.bgOpacity', contOpacityRow.get_value());
+    });
+    containerGroup.add(contOpacityRow);
+
+    // Background Color
+    const bgColor = _getOverride(settings, designId, 'container.bgColor', dc.bgColor);
+    const bgColorRow = new Adw.ActionRow({ title: 'Background Color' });
+    const bgRgba = new Gdk.RGBA();
+    bgRgba.red = (bgColor[0] || 0) / 255;
+    bgRgba.green = (bgColor[1] || 0) / 255;
+    bgRgba.blue = (bgColor[2] || 0) / 255;
+    bgRgba.alpha = 1.0;
+    const bgColorDialog = new Gtk.ColorDialog();
+    const bgColorBtn = new Gtk.ColorDialogButton({
+        dialog: bgColorDialog,
+        rgba: bgRgba,
+        valign: Gtk.Align.CENTER,
+    });
+    bgColorBtn.connect('notify::rgba', () => {
+        const c = bgColorBtn.get_rgba();
+        _setOverride(settings, designId, 'container.bgColor', [
+            Math.round(c.red * 255),
+            Math.round(c.green * 255),
+            Math.round(c.blue * 255),
+        ]);
+    });
+    bgColorRow.add_suffix(bgColorBtn);
+    containerGroup.add(bgColorRow);
+
+    // --- Bars group ---
+    const barsGroup = new Adw.PreferencesGroup({ title: 'Bars' });
+    groups.push(barsGroup);
+
+    const db = design.bars;
+
+    // Border Radius
+    const barRadiusRow = new Adw.SpinRow({
+        title: 'Border Radius',
+        adjustment: new Gtk.Adjustment({
+            lower: 0, upper: 20, step_increment: 1, page_increment: 2,
+            value: _getOverride(settings, designId, 'bars.borderRadius', db.borderRadius),
+        }),
+    });
+    barRadiusRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.borderRadius', barRadiusRow.get_value());
+    });
+    barsGroup.add(barRadiusRow);
+
+    // Scale Min
+    const scaleMinRow = new Adw.SpinRow({
+        title: 'Scale Min',
+        digits: 2,
+        adjustment: new Gtk.Adjustment({
+            lower: 0.0, upper: 1.0, step_increment: 0.02, page_increment: 0.1,
+            value: _getOverride(settings, designId, 'bars.scaleMin', db.scaleMin),
+        }),
+    });
+    scaleMinRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.scaleMin', scaleMinRow.get_value());
+    });
+    barsGroup.add(scaleMinRow);
+
+    // Scale Max
+    const scaleMaxRow = new Adw.SpinRow({
+        title: 'Scale Max',
+        digits: 2,
+        adjustment: new Gtk.Adjustment({
+            lower: 0.1, upper: 2.0, step_increment: 0.05, page_increment: 0.1,
+            value: _getOverride(settings, designId, 'bars.scaleMax', db.scaleMax),
+        }),
+    });
+    scaleMaxRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.scaleMax', scaleMaxRow.get_value());
+    });
+    barsGroup.add(scaleMaxRow);
+
+    // Opacity Mode
+    const OPACITY_MODES = ['uniform', 'gradient'];
+    const OPACITY_LABELS = ['Uniform', 'Gradient'];
+    const opacityModeModel = new Gtk.StringList();
+    for (const l of OPACITY_LABELS) opacityModeModel.append(l);
+
+    const curOpacityMode = _getOverride(settings, designId, 'bars.opacityMode', db.opacityMode);
+
+    const opacityModeRow = new Adw.ComboRow({
+        title: 'Opacity Mode',
+        model: opacityModeModel,
+    });
+    opacityModeRow.set_selected(OPACITY_MODES.indexOf(curOpacityMode));
+
+    // Opacity Uniform (visible when mode=uniform)
+    const opUniformRow = new Adw.SpinRow({
+        title: 'Opacity',
+        adjustment: new Gtk.Adjustment({
+            lower: 0, upper: 255, step_increment: 5, page_increment: 25,
+            value: _getOverride(settings, designId, 'bars.opacityUniform', db.opacityUniform),
+        }),
+    });
+    opUniformRow.visible = (curOpacityMode === 'uniform');
+    opUniformRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.opacityUniform', opUniformRow.get_value());
+    });
+
+    // Opacity Min/Max (visible when mode=gradient)
+    const opMinRow = new Adw.SpinRow({
+        title: 'Opacity Min',
+        adjustment: new Gtk.Adjustment({
+            lower: 0, upper: 255, step_increment: 5, page_increment: 25,
+            value: _getOverride(settings, designId, 'bars.opacityMin', db.opacityMin),
+        }),
+    });
+    opMinRow.visible = (curOpacityMode === 'gradient');
+    opMinRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.opacityMin', opMinRow.get_value());
+    });
+
+    const opMaxRow = new Adw.SpinRow({
+        title: 'Opacity Max',
+        adjustment: new Gtk.Adjustment({
+            lower: 0, upper: 255, step_increment: 5, page_increment: 25,
+            value: _getOverride(settings, designId, 'bars.opacityMax', db.opacityMax),
+        }),
+    });
+    opMaxRow.visible = (curOpacityMode === 'gradient');
+    opMaxRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.opacityMax', opMaxRow.get_value());
+    });
+
+    opacityModeRow.connect('notify::selected', () => {
+        const idx = opacityModeRow.get_selected();
+        if (idx >= 0 && idx < OPACITY_MODES.length) {
+            const mode = OPACITY_MODES[idx];
+            _setOverride(settings, designId, 'bars.opacityMode', mode);
+            opUniformRow.visible = (mode === 'uniform');
+            opMinRow.visible = (mode === 'gradient');
+            opMaxRow.visible = (mode === 'gradient');
+        }
+    });
+
+    barsGroup.add(opacityModeRow);
+    barsGroup.add(opUniformRow);
+    barsGroup.add(opMinRow);
+    barsGroup.add(opMaxRow);
+
+    // Glow Radius
+    const glowRadiusRow = new Adw.SpinRow({
+        title: 'Glow Radius',
+        adjustment: new Gtk.Adjustment({
+            lower: 0, upper: 20, step_increment: 1, page_increment: 2,
+            value: _getOverride(settings, designId, 'bars.glowRadius', db.glowRadius),
+        }),
+    });
+    glowRadiusRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.glowRadius', glowRadiusRow.get_value());
+    });
+    barsGroup.add(glowRadiusRow);
+
+    // Glow Alpha
+    const glowAlphaRow = new Adw.SpinRow({
+        title: 'Glow Alpha',
+        digits: 2,
+        adjustment: new Gtk.Adjustment({
+            lower: 0.0, upper: 1.0, step_increment: 0.05, page_increment: 0.1,
+            value: _getOverride(settings, designId, 'bars.glowAlpha', db.glowAlpha),
+        }),
+    });
+    glowAlphaRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.glowAlpha', glowAlphaRow.get_value());
+    });
+    barsGroup.add(glowAlphaRow);
+
+    // Highlight
+    const highlightRow = new Adw.SwitchRow({
+        title: 'Highlight',
+        subtitle: 'Top highlight on each bar',
+        active: _getOverride(settings, designId, 'bars.highlight', db.highlight),
+    });
+    highlightRow.connect('notify::active', () => {
+        _setOverride(settings, designId, 'bars.highlight', highlightRow.get_active());
+    });
+    barsGroup.add(highlightRow);
+
+    // Color Mute
+    const colorMuteRow = new Adw.SpinRow({
+        title: 'Color Mute',
+        digits: 2,
+        adjustment: new Gtk.Adjustment({
+            lower: 0.0, upper: 1.0, step_increment: 0.05, page_increment: 0.1,
+            value: _getOverride(settings, designId, 'bars.colorMute', db.colorMute),
+        }),
+    });
+    colorMuteRow.connect('notify::value', () => {
+        _setOverride(settings, designId, 'bars.colorMute', colorMuteRow.get_value());
+    });
+    barsGroup.add(colorMuteRow);
+
+    // --- Layers group ---
+    const layers = design.layers || [];
+    if (layers.length > 0) {
+        const layersGroup = new Adw.PreferencesGroup({ title: 'Layers' });
+        groups.push(layersGroup);
+
+        for (const layer of layers) {
+            const layerType = layer.type;
+            const capitalType = layerType.charAt(0).toUpperCase() + layerType.slice(1);
+
+            const expander = new Adw.ExpanderRow({
+                title: capitalType,
+                subtitle: `${layerType} layer`,
+            });
+            layersGroup.add(expander);
+
+            // Enable/disable
+            const layerEnabled = _getOverride(settings, designId, `layers.${layerType}.enabled`, true);
+            const enableRow = new Adw.SwitchRow({
+                title: 'Enabled',
+                active: layerEnabled !== false,
+            });
+            enableRow.connect('notify::active', () => {
+                _setOverride(settings, designId, `layers.${layerType}.enabled`, enableRow.get_active());
+            });
+            expander.add_row(enableRow);
+
+            // Layer-specific params
+            if (layerType === 'shadow') {
+                _addLayerSpinRow(expander, 'Blur', 0, 30, 1, layer.blur || 8, settings, designId, `layers.${layerType}.blur`);
+                _addLayerSpinRowFloat(expander, 'Alpha', 0, 1, 0.05, layer.alpha || 0.3, settings, designId, `layers.${layerType}.alpha`);
+                _addLayerSpinRow(expander, 'Offset X', -20, 20, 1, layer.x || 0, settings, designId, `layers.${layerType}.x`);
+                _addLayerSpinRow(expander, 'Offset Y', -20, 20, 1, layer.y || 0, settings, designId, `layers.${layerType}.y`);
+            } else if (layerType === 'border') {
+                _addLayerSpinRow(expander, 'Width', 0, 10, 1, layer.width || 2, settings, designId, `layers.${layerType}.width`);
+                _addLayerSpinRowFloat(expander, 'Alpha', 0, 1, 0.05, layer.alpha || 0.3, settings, designId, `layers.${layerType}.alpha`);
+            } else if (layerType === 'pixelGrid') {
+                _addLayerSpinRowFloat(expander, 'Alpha', 0, 1, 0.02, layer.alpha || 0.12, settings, designId, `layers.${layerType}.alpha`);
+            } else if (layerType === 'scanlines') {
+                _addLayerSpinRow(expander, 'Line Height', 1, 5, 1, layer.lineHeight || 1, settings, designId, `layers.${layerType}.lineHeight`);
+                _addLayerSpinRow(expander, 'Line Spacing', 1, 10, 1, layer.lineSpacing || 3, settings, designId, `layers.${layerType}.lineSpacing`);
+                _addLayerSpinRowFloat(expander, 'Alpha', 0, 1, 0.05, layer.alpha || 0.15, settings, designId, `layers.${layerType}.alpha`);
+            } else if (layerType === 'frame') {
+                _addLayerSpinRow(expander, 'Border Width', 0, 10, 1, layer.borderWidth || 2, settings, designId, `layers.${layerType}.borderWidth`);
+                _addLayerSpinRow(expander, 'Border Radius', 0, 40, 1, layer.borderRadius || 20, settings, designId, `layers.${layerType}.borderRadius`);
+                _addLayerSpinRowFloat(expander, 'Alpha', 0, 1, 0.05, layer.alpha || 0.7, settings, designId, `layers.${layerType}.alpha`);
+                _addLayerSpinRow(expander, 'Inset', 0, 20, 1, layer.inset || 0, settings, designId, `layers.${layerType}.inset`);
+            } else if (layerType === 'innerHighlight' || layerType === 'specularHighlight' || layerType === 'innerShadow') {
+                _addLayerSpinRowFloat(expander, 'Alpha', 0, 1, 0.05, layer.alpha || 0.1, settings, designId, `layers.${layerType}.alpha`);
+            }
+        }
+    }
+
+    // --- Reset button ---
+    const resetGroup = new Adw.PreferencesGroup();
+    groups.push(resetGroup);
+
+    const resetRow = new Adw.ActionRow();
+    const resetBtn = new Gtk.Button({
+        label: 'Reset to Defaults',
+        halign: Gtk.Align.CENTER,
+        hexpand: true,
+        valign: Gtk.Align.CENTER,
+    });
+    resetBtn.add_css_class('destructive-action');
+    resetBtn.connect('clicked', () => {
+        _deleteOverrides(settings, designId);
+    });
+    resetRow.set_child(resetBtn);
+    resetGroup.add(resetRow);
+
+    return groups;
+}
+
+function _addLayerSpinRow(parent, title, lower, upper, step, defaultVal, settings, designId, path) {
+    const curVal = _getOverride(settings, designId, path, defaultVal);
+    const row = new Adw.SpinRow({
+        title: title,
+        adjustment: new Gtk.Adjustment({
+            lower, upper, step_increment: step, page_increment: step * 5,
+            value: curVal,
+        }),
+    });
+    row.connect('notify::value', () => {
+        _setOverride(settings, designId, path, row.get_value());
+    });
+    parent.add_row(row);
+}
+
+function _addLayerSpinRowFloat(parent, title, lower, upper, step, defaultVal, settings, designId, path) {
+    const curVal = _getOverride(settings, designId, path, defaultVal);
+    const row = new Adw.SpinRow({
+        title: title,
+        digits: 2,
+        adjustment: new Gtk.Adjustment({
+            lower, upper, step_increment: step, page_increment: step * 5,
+            value: curVal,
+        }),
+    });
+    row.connect('notify::value', () => {
+        _setOverride(settings, designId, path, row.get_value());
+    });
+    parent.add_row(row);
 }
 
 // Helper: accelerator string to human-readable label

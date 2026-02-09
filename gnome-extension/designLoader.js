@@ -59,21 +59,23 @@ function _deepMerge(defaults, overrides) {
     return result;
 }
 
-const FALLBACK_MODERN = {
-    name: 'Modern',
+const FALLBACK_GNOME = {
+    name: 'Gnome',
     sortOrder: 1,
     container: {
         borderRadius: 30,
-        bgColor: [0, 0, 0],
-        bgOpacity: 0.25,
+        bgColor: [54, 54, 58],
+        bgOpacity: 1.0,
+        defaultWidth: 104,
+        defaultHeight: 69,
     },
     bars: {
-        borderRadius: 2,
-        shadow: '0 0 4px rgba(0, 0, 0, 0.4)',
-        opacityMode: 'gradient',
+        borderRadius: 3,
+        shadow: null,
+        opacityMode: 'uniform',
         opacityMin: 80,
         opacityMax: 255,
-        opacityUniform: 255,
+        opacityUniform: 220,
         pivotY: 0.5,
         scaleMin: 0.04,
         scaleMax: 1.0,
@@ -82,7 +84,7 @@ const FALLBACK_MODERN = {
         glowAlpha: 0,
         highlight: false,
         widthAdjust: 0,
-        colorMute: 0,
+        colorMute: 0.15,
         colorOverride: null,
     },
     layers: [],
@@ -100,7 +102,7 @@ export function loadDesigns(extensionPath) {
 
     if (!dir.query_exists(null)) {
         console.debug('Voicify: designs/ directory not found, using fallback');
-        designs.set('modern', FALLBACK_MODERN);
+        designs.set('gnome', FALLBACK_GNOME);
         return designs;
     }
 
@@ -138,7 +140,7 @@ export function loadDesigns(extensionPath) {
 
     if (designs.size === 0) {
         console.debug('Voicify: no designs loaded, using fallback');
-        designs.set('modern', FALLBACK_MODERN);
+        designs.set('gnome', FALLBACK_GNOME);
         return designs;
     }
 
@@ -157,4 +159,35 @@ export function loadDesigns(extensionPath) {
  */
 export function getDesignIds(designs) {
     return [...designs.keys()];
+}
+
+/**
+ * Apply user overrides to a design.
+ * @param {object} design - Base design object
+ * @param {string} overridesJson - JSON string from design-overrides setting
+ * @param {string} designId - Current design ID
+ * @returns {object} Design with overrides applied (deep clone)
+ */
+export function applyOverrides(design, overridesJson, designId) {
+    let allOverrides;
+    try {
+        allOverrides = JSON.parse(overridesJson || '{}');
+    } catch (e) {
+        return design;
+    }
+    const o = allOverrides[designId];
+    if (!o) return design;
+
+    const result = JSON.parse(JSON.stringify(design));
+    if (o.container) Object.assign(result.container, o.container);
+    if (o.bars) Object.assign(result.bars, o.bars);
+    if (o.layers) {
+        result.layers = result.layers.map(layer => {
+            const lo = o.layers[layer.type];
+            if (!lo) return layer;
+            if (lo.enabled === false) return null;
+            return { ...layer, ...lo };
+        }).filter(Boolean);
+    }
+    return result;
 }

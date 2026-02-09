@@ -1,0 +1,29 @@
+{
+    "name": "Gnome",
+    "sortOrder": 1,
+    "defaultTheme": "ember",
+    "container": {
+        "borderRadius": 30,
+        "bgColor": [54, 54, 58],
+        "bgOpacity": 1.0,
+        "defaultWidth": 104,
+        "defaultHeight": 69
+    },
+    "bars": {
+        "borderRadius": 3,
+        "shadow": null,
+        "opacityMode": "uniform",
+        "opacityUniform": 220,
+        "pivotY": 0.5,
+        "scaleMin": 0.04,
+        "scaleMax": 1.0,
+        "glowFromTheme": false,
+        "glowRadius": 0,
+        "glowAlpha": 0,
+        "highlight": false,
+        "widthAdjust": 0,
+        "colorMute": 0.15,
+        "colorOverride": null
+    },
+    "layers": []
+}

@@ -7,9 +7,9 @@
       <description>Color theme for the waveform visualization bars</description>
     </key>
     <key name="wave-design" type="s">
-      <default>'modern'</default>
+      <default>'gnome'</default>
       <summary>Waveform design style</summary>
-      <description>Visual style preset loaded from designs/ directory (modern, glass, minimal, neon, skeuomorphic, neumorphic, retro, brutalist, material)</description>
+      <description>Visual style preset loaded from designs/ directory (gnome, glass, minimal, neon, skeuomorphic, neumorphic, retro, brutalist, material)</description>
     </key>
     <key name="wave-size" type="s">
       <default>'medium'</default>
@@ -79,6 +79,14 @@
       <summary>Waveform Y position</summary>
       <description>Vertical position as fraction of usable screen height (0.0=top, 1.0=bottom)</description>
       <range min="0.0" max="1.0"/>
+    </key>
+    <key name="advanced-settings" type="b">
+      <default>false</default>
+      <summary>Show advanced design settings</summary>
+    </key>
+    <key name="design-overrides" type="s">
+      <default>'{}'</default>
+      <summary>Per-design parameter overrides (JSON)</summary>
     </key>
     <key name="shortcut-cancel" type="s">
       <default>'&lt;Ctrl&gt;&lt;Super&gt;x'</default>
