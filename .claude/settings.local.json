@@ -27,7 +27,10 @@
       "Bash(gsettings:*)",
       "Bash(import:*)",
       "Bash(magick:*)",
-      "Bash(SCHEMA=/home/dooshek/.local/share/gnome-shell/extensions/voicify@dooshek.com/schemas/:*)"
+      "Bash(SCHEMA=/home/dooshek/.local/share/gnome-shell/extensions/voicify@dooshek.com/schemas/:*)",
+      "Bash(for f in /home/dooshek/projects/voicify/main/gnome-extension/designs/*.json)",
+      "Bash(done)",
+      "Bash(./deploy.sh:*)"
     ]
   }
 }
