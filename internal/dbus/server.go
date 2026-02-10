@@ -220,7 +220,7 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 		go s.stopPostTranscriptionAutoPasteAsync()
 	} else {
 		// Check if media is currently playing before starting recording
-		s.wasMediaPlaying = s.checkMediaPlaying()
+		s.wasMediaPlaying = s.pauseAndCheckMediaPlaying()
 
 		// Start recording in auto-paste mode
 		logger.Debugf("D-Bus: Starting post-transcription auto-paste recording")
@@ -249,7 +249,7 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 		go s.stopPostTranscriptionRouterAsync()
 	} else {
 		// Check if media is currently playing before starting recording
-		s.wasMediaPlaying = s.checkMediaPlaying()
+		s.wasMediaPlaying = s.pauseAndCheckMediaPlaying()
 
 		// Start recording in router mode
 		logger.Debugf("D-Bus: Starting post-transcription router recording")
@@ -277,7 +277,7 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 	}
 
 	// Check if media is currently playing before starting recording
-	s.wasMediaPlaying = s.checkMediaPlaying()
+	s.wasMediaPlaying = s.pauseAndCheckMediaPlaying()
 
 	s.isRealtimeMode = true
 	// reset accumulator for this session
@@ -380,11 +380,13 @@ func (s *Server) SetAutoPausePlayback(enabled bool) *dbus.Error {
 	return nil
 }
 
-// checkMediaPlaying checks if any audio stream is currently playing (not corked)
-func (s *Server) checkMediaPlaying() bool {
+// pauseAndCheckMediaPlaying pauses media if playing and returns whether it was playing.
+// Must be called with s.mu held.
+func (s *Server) pauseAndCheckMediaPlaying() bool {
 	if !s.autoPausePlayback {
 		return false
 	}
+
 	cmd := exec.Command("pactl", "list", "sink-inputs")
 	output, err := cmd.Output()
 	if err != nil {
@@ -393,34 +395,56 @@ func (s *Server) checkMediaPlaying() bool {
 	}
 
 	// Parse output to find if any stream is not corked (actively playing)
+	playing := false
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Corked: no") {
-			logger.Debugf("Detected active media playback (uncorked stream)")
-			return true
+			playing = true
+			break
 		}
 	}
 
-	logger.Debugf("No active media playback detected")
-	return false
+	if !playing {
+		logger.Debugf("No active media playback detected")
+		return false
+	}
+
+	logger.Debugf("Active media playback detected, pausing via playerctl")
+	pauseCmd := exec.Command("playerctl", "pause")
+	if err := pauseCmd.Run(); err != nil {
+		logger.Debugf("playerctl pause failed, trying XF86AudioPause: %v", err)
+		xdoCmd := exec.Command("xdotool", "key", "XF86AudioPause")
+		if err2 := xdoCmd.Run(); err2 != nil {
+			logger.Debugf("XF86AudioPause also failed: %v", err2)
+		}
+	}
+	return true
 }
 
-// resumeMediaPlayback attempts to resume media playback by simulating PLAY key press
-// Only resumes if media was playing before recording started
+// resumeMediaPlayback attempts to resume media playback after recording stops.
+// Reads and resets wasMediaPlaying atomically under lock.
 func (s *Server) resumeMediaPlayback() {
-	if !s.wasMediaPlaying {
-		logger.Debugf("Skipping media resume - nothing was playing before recording")
+	s.mu.Lock()
+	was := s.wasMediaPlaying
+	s.wasMediaPlaying = false
+	s.mu.Unlock()
+
+	if !was {
 		return
 	}
 
-	// Delay to allow microphone device to switch back (3 seconds for hardware transition)
-	time.Sleep(3 * time.Second)
+	// Delay to allow audio device to settle
+	time.Sleep(2 * time.Second)
 
-	logger.Debugf("Attempting to resume media playback via xdotool")
-	cmd := exec.Command("xdotool", "key", "XF86AudioPlay")
+	logger.Debugf("Resuming media playback via playerctl")
+	cmd := exec.Command("playerctl", "play")
 	if err := cmd.Run(); err != nil {
-		logger.Debugf("Failed to resume media playback (xdotool not available or failed): %v", err)
+		logger.Debugf("playerctl play failed, trying XF86AudioPlay: %v", err)
+		xdoCmd := exec.Command("xdotool", "key", "XF86AudioPlay")
+		if err2 := xdoCmd.Run(); err2 != nil {
+			logger.Debugf("XF86AudioPlay also failed: %v", err2)
+		}
 	}
 }
 
