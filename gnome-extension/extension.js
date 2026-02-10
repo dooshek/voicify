@@ -338,6 +338,7 @@ export default class VoicifyExtension extends Extension {
             this._indicator = null;
         }
         this._icon = null;
+        this._enterAfterPasteItem = null;
         this._virtualKeyboard = null;
     }
 
@@ -364,6 +365,14 @@ export default class VoicifyExtension extends Extension {
             GLib.Source.remove(this._rebuildDebounceTimer);
             this._rebuildDebounceTimer = null;
         }
+        if (this._fadeInTimer) {
+            GLib.Source.remove(this._fadeInTimer);
+            this._fadeInTimer = null;
+        }
+        if (this._fadeOutTimer) {
+            GLib.Source.remove(this._fadeOutTimer);
+            this._fadeOutTimer = null;
+        }
     }
 
     // --- Panel indicator ---
@@ -388,6 +397,17 @@ export default class VoicifyExtension extends Extension {
             () => this._onPostRouterShortcutPressed());
         this._addModeMenuItem('Cancel', 'shortcut-cancel',
             () => this._onCancelShortcutPressed());
+
+        this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        this._enterAfterPasteItem = new PopupMenu.PopupSwitchMenuItem(
+            'Enter after paste',
+            this._settings.get_boolean('enter-after-paste'),
+        );
+        this._enterAfterPasteItem.connect('toggled', (item, state) => {
+            this._settings.set_boolean('enter-after-paste', state);
+        });
+        this._indicator.menu.addMenuItem(this._enterAfterPasteItem);
 
         this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -875,7 +895,7 @@ export default class VoicifyExtension extends Extension {
                 this._isPostAutoPaste = false;
                 this._isPostRouter = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             })
             .catch(error => {
                 console.error('D-Bus: Failed to call CancelRecording:', error);
@@ -884,7 +904,7 @@ export default class VoicifyExtension extends Extension {
                 this._isPostAutoPaste = false;
                 this._isPostRouter = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             });
     }
 
@@ -998,14 +1018,14 @@ export default class VoicifyExtension extends Extension {
                 this._state = State.IDLE;
                 this._isRealtimeMode = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             })
             .catch(error => {
                 console.error('D-Bus: Failed to call CancelRecording:', error);
                 this._state = State.IDLE;
                 this._isRealtimeMode = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             });
     }
 
@@ -1027,7 +1047,7 @@ export default class VoicifyExtension extends Extension {
                 this._state = State.IDLE;
                 this._isPostAutoPaste = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             });
     }
 
@@ -1049,7 +1069,7 @@ export default class VoicifyExtension extends Extension {
                 this._state = State.IDLE;
                 this._isPostRouter = false;
                 this._updateIndicator();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             });
     }
 
@@ -1103,7 +1123,7 @@ export default class VoicifyExtension extends Extension {
         this._isPostAutoPaste = false;
         this._isPostRouter = false;
         this._updateIndicator();
-        this._hideWaveWidget();
+        this._fadeOutAndHide(200);
     }
 
     // --- Text injection ---
@@ -1128,21 +1148,30 @@ export default class VoicifyExtension extends Extension {
             const isTerminal = TERMINAL_WM_CLASSES.some(t => appLower.includes(t));
 
             const eventTime = global.get_current_time();
+            let lastTime = eventTime;
 
             if (isTerminal) {
                 // Ctrl+Shift+V for terminals
-                this._virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_v, Clutter.KeyState.RELEASED);
-                this._virtualKeyboard.notify_keyval(eventTime + 40, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
-                this._virtualKeyboard.notify_keyval(eventTime + 50, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 10, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 20, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 30, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime + 40, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime + 50, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+                lastTime += 60;
             } else {
                 // Ctrl+V for standard apps
-                this._virtualKeyboard.notify_keyval(eventTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(eventTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(eventTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
-                this._virtualKeyboard.notify_keyval(eventTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+                lastTime += 40;
+            }
+
+            // Optional Enter after paste
+            if (this._settings && this._settings.get_boolean('enter-after-paste')) {
+                this._virtualKeyboard.notify_keyval(lastTime + 10, Clutter.KEY_Return, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 20, Clutter.KEY_Return, Clutter.KeyState.RELEASED);
             }
         } catch (error) {
             console.debug('Virtual keyboard paste failed:', error.message);
@@ -1298,8 +1327,24 @@ export default class VoicifyExtension extends Extension {
         }
 
         this._waveWidget.set_size(outerWidth, outerHeight);
+        this._waveWidget.opacity = 0;
         Main.layoutManager.addChrome(this._waveWidget);
         this._positionWaveWidget(totalWidth, totalHeight);
+
+        // Fade-in animation
+        this._fadeInPhase = 0;
+        this._fadeInTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 25, () => {
+            this._fadeInPhase++;
+            const progress = Math.min(1, this._fadeInPhase / 8);
+            const ease = progress * (2 - progress); // ease-out
+            if (this._waveWidget)
+                this._waveWidget.opacity = Math.round(255 * ease);
+            if (progress >= 1) {
+                this._fadeInTimer = null;
+                return GLib.SOURCE_REMOVE;
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
 
         // Drag-to-reposition
         this._waveWidget.connect('button-press-event', (actor, event) => {
@@ -1419,6 +1464,51 @@ export default class VoicifyExtension extends Extension {
             this._trailContainer.visible = false;
         }
         this._startUploadAnimation();
+    }
+
+    _fadeOutAndHide(durationMs = 200) {
+        // Stop any running fade-in
+        if (this._fadeInTimer) {
+            GLib.Source.remove(this._fadeInTimer);
+            this._fadeInTimer = null;
+        }
+        // Stop any running finished animation
+        if (this._finishedTimer) {
+            GLib.Source.remove(this._finishedTimer);
+            this._finishedTimer = null;
+        }
+        // Stop any previous fade-out
+        if (this._fadeOutTimer) {
+            GLib.Source.remove(this._fadeOutTimer);
+            this._fadeOutTimer = null;
+        }
+
+        if (!this._waveWidget) return;
+
+        const startOpacity = this._waveWidget.opacity;
+        if (startOpacity === 0) {
+            this._hideWaveWidget();
+            return;
+        }
+
+        const frameMs = 25;
+        const totalFrames = Math.max(1, Math.round(durationMs / frameMs));
+        let frame = 0;
+
+        this._fadeOutTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, frameMs, () => {
+            frame++;
+            const progress = Math.min(1, frame / totalFrames);
+            const ease = progress * progress; // ease-in (accelerate)
+            if (this._waveWidget)
+                this._waveWidget.opacity = Math.round(startOpacity * (1 - ease));
+
+            if (progress >= 1) {
+                this._fadeOutTimer = null;
+                this._hideWaveWidget();
+                return GLib.SOURCE_REMOVE;
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
     }
 
     _hideWaveWidget() {
@@ -1876,11 +1966,11 @@ export default class VoicifyExtension extends Extension {
 
         const startScales = this._waveBars.map(bar => bar.scale_y);
         let phase = 0;
-        const barFrames = 17;
+        const barFrames = 8;
         const fadeFrames = 8;
         const totalFrames = barFrames + fadeFrames;
 
-        this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+        this._finishedTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 25, () => {
             if (!this._waveWidget) {
                 this._finishedTimer = null;
                 return GLib.SOURCE_REMOVE;
@@ -1961,7 +2051,7 @@ export default class VoicifyExtension extends Extension {
                 this._state = State.IDLE;
                 this._updateIndicator();
                 this._stopLevelWave();
-                this._hideWaveWidget();
+                this._fadeOutAndHide(200);
             })
         );
 

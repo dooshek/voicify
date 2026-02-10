@@ -84,6 +84,11 @@
       <default>false</default>
       <summary>Auto-pause media playback during recording</summary>
     </key>
+    <key name="enter-after-paste" type="b">
+      <default>false</default>
+      <summary>Press Enter after auto-paste</summary>
+      <description>Automatically press Enter after pasting transcribed text</description>
+    </key>
     <key name="advanced-settings" type="b">
       <default>false</default>
       <summary>Show advanced design settings</summary>
