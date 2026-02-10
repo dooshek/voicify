@@ -80,6 +80,10 @@
       <description>Vertical position as fraction of usable screen height (0.0=top, 1.0=bottom)</description>
       <range min="0.0" max="1.0"/>
     </key>
+    <key name="auto-pause-playback" type="b">
+      <default>false</default>
+      <summary>Auto-pause media playback during recording</summary>
+    </key>
     <key name="advanced-settings" type="b">
       <default>false</default>
       <summary>Show advanced design settings</summary>

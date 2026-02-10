@@ -76,6 +76,9 @@ const VoicifyDBusInterface = `
       <arg name="title" type="s" direction="in"/>
       <arg name="app" type="s" direction="in"/>
     </method>
+    <method name="SetAutoPausePlayback">
+      <arg name="enabled" type="b" direction="in"/>
+    </method>
     <signal name="RecordingStarted"/>
     <signal name="TranscriptionReady">
       <arg name="text" type="s"/>
@@ -223,6 +226,9 @@ export default class VoicifyExtension extends Extension {
         this._settingsChangedIds.push(
             this._settings.connect('changed::design-overrides', () => this._applyDesign())
         );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::auto-pause-playback', () => this._syncAutoPausePlayback())
+        );
 
         // Shortcut change handlers
         this._settingsChangedIds.push(
@@ -261,6 +267,7 @@ export default class VoicifyExtension extends Extension {
         }
 
         this._initDBusProxy();
+        this._syncAutoPausePlayback();
         this._createIndicator();
 
         // Grab shortcuts from settings
@@ -446,6 +453,13 @@ export default class VoicifyExtension extends Extension {
     }
 
     // --- Settings apply methods ---
+
+    _syncAutoPausePlayback() {
+        if (!this._dbusProxy || !this._settings) return;
+        const enabled = this._settings.get_boolean('auto-pause-playback');
+        this._dbusProxy.SetAutoPausePlaybackAsync(enabled)
+            .catch(e => console.debug('Voicify: SetAutoPausePlayback failed:', e.message));
+    }
 
     _applyTheme() {
         const themeId = this._settings

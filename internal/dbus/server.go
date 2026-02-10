@@ -42,7 +42,8 @@ type Server struct {
 	// accumulated realtime transcription across complete chunks
 	realtimeAccum string
 	// media playback state tracking
-	wasMediaPlaying bool
+	wasMediaPlaying   bool
+	autoPausePlayback bool
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
@@ -128,6 +129,12 @@ func (s *Server) Start() error {
 					Args: []introspect.Arg{
 						{Name: "title", Type: "s", Direction: "in"},
 						{Name: "app", Type: "s", Direction: "in"},
+					},
+				},
+				{
+					Name: "SetAutoPausePlayback",
+					Args: []introspect.Arg{
+						{Name: "enabled", Type: "b", Direction: "in"},
 					},
 				},
 			},
@@ -364,8 +371,20 @@ func (s *Server) UpdateFocusedWindow(title string, app string) *dbus.Error {
 	return nil
 }
 
+// SetAutoPausePlayback enables or disables automatic media pause/resume during recording
+func (s *Server) SetAutoPausePlayback(enabled bool) *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.autoPausePlayback = enabled
+	logger.Debugf("D-Bus: SetAutoPausePlayback = %v", enabled)
+	return nil
+}
+
 // checkMediaPlaying checks if any audio stream is currently playing (not corked)
 func (s *Server) checkMediaPlaying() bool {
+	if !s.autoPausePlayback {
+		return false
+	}
 	cmd := exec.Command("pactl", "list", "sink-inputs")
 	output, err := cmd.Output()
 	if err != nil {

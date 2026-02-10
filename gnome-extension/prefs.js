@@ -366,6 +366,13 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         const otherGroup = new Adw.PreferencesGroup({ title: 'Other' });
         page.add(otherGroup);
 
+        const autoPauseRow = new Adw.SwitchRow({
+            title: 'Auto-pause Playback',
+            subtitle: 'Pause media during recording, resume after',
+        });
+        settings.bind('auto-pause-playback', autoPauseRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        otherGroup.add(autoPauseRow);
+
         const advancedRow = new Adw.SwitchRow({
             title: 'Advanced Settings',
             subtitle: 'Fine-tune all parameters of the current style',
