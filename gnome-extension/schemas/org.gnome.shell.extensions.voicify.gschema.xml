@@ -89,6 +89,12 @@
       <summary>Press Enter after auto-paste</summary>
       <description>Automatically press Enter after pasting transcribed text</description>
     </key>
+    <key name="enter-after-paste-delay" type="i">
+      <default>500</default>
+      <summary>Enter after paste delay (ms)</summary>
+      <description>How long to wait after paste before pressing Enter (100-5000ms)</description>
+      <range min="100" max="5000"/>
+    </key>
     <key name="advanced-settings" type="b">
       <default>false</default>
       <summary>Show advanced design settings</summary>

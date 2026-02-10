@@ -343,49 +343,110 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         sensitivityRow.add_suffix(sensScale);
         responsivenessGroup.add(sensitivityRow);
 
-        // --- Position group ---
-        const positionGroup = new Adw.PreferencesGroup({
-            title: 'Position',
-            description: 'Drag the waveform widget during recording to reposition it',
+        // === Shortcuts page (second tab) ===
+        const shortcutsPage = new Adw.PreferencesPage({
+            title: 'Shortcuts',
+            icon_name: 'preferences-desktop-keyboard-shortcuts-symbolic',
         });
-        page.add(positionGroup);
+        window.add(shortcutsPage);
 
-        // --- Keyboard shortcuts group (editable) ---
-        const shortcutsGroup = new Adw.PreferencesGroup({
-            title: 'Keyboard Shortcuts',
-            description: 'Click a shortcut to change it',
-        });
-        page.add(shortcutsGroup);
+        const shortcutsGroup = new Adw.PreferencesGroup();
+        shortcutsPage.add(shortcutsGroup);
 
         _addShortcutRow(shortcutsGroup, 'Realtime', 'shortcut-realtime', settings, window);
         _addShortcutRow(shortcutsGroup, 'Post + auto-paste', 'shortcut-post-autopaste', settings, window);
         _addShortcutRow(shortcutsGroup, 'Post + router', 'shortcut-post-router', settings, window);
         _addShortcutRow(shortcutsGroup, 'Cancel', 'shortcut-cancel', settings, window);
 
-        // --- Other group ---
-        const otherGroup = new Adw.PreferencesGroup({ title: 'Other' });
-        page.add(otherGroup);
+        // === Advanced page (third tab) ===
+        const advancedPage = new Adw.PreferencesPage({
+            title: 'Advanced',
+            icon_name: 'preferences-other-symbolic',
+        });
+        window.add(advancedPage);
+
+        // --- Behavior group ---
+        const behaviorGroup = new Adw.PreferencesGroup({
+            title: 'Behavior',
+        });
+        advancedPage.add(behaviorGroup);
 
         const autoPauseRow = new Adw.SwitchRow({
             title: 'Auto-pause Playback',
             subtitle: 'Pause media during recording, resume after',
         });
         settings.bind('auto-pause-playback', autoPauseRow, 'active', Gio.SettingsBindFlags.DEFAULT);
-        otherGroup.add(autoPauseRow);
+        behaviorGroup.add(autoPauseRow);
+
+        // Check playerctl when auto-pause is toggled ON
+        autoPauseRow.connect('notify::active', () => {
+            if (!autoPauseRow.active) return;
+            if (GLib.find_program_in_path('playerctl')) return;
+
+            // Block - revert immediately
+            settings.set_boolean('auto-pause-playback', false);
+
+            const cmd = _getInstallCommand();
+            const dialog = new Adw.AlertDialog({
+                heading: 'playerctl is not installed',
+                body: 'Auto-pause requires playerctl to reliably control media playback.\n\nInstall it first, then enable this option.\n\nRun in terminal:',
+                content_width: 460,
+            });
+
+            const cmdEntry = new Gtk.Entry({
+                text: cmd,
+                editable: false,
+                hexpand: true,
+            });
+            cmdEntry.add_css_class('monospace');
+            dialog.set_extra_child(cmdEntry);
+
+            dialog.add_response('ok', 'OK');
+            dialog.set_default_response('ok');
+
+            dialog.present(window);
+        });
+
+        // Enter after paste delay
+        const enterDelayRow = new Adw.ActionRow({
+            title: 'Send After Paste Delay',
+            subtitle: 'Wait time before sending Enter',
+        });
+        const enterDelayAdj = new Gtk.Adjustment({
+            lower: 100, upper: 5000, step_increment: 100, page_increment: 500,
+            value: settings.get_int('enter-after-paste-delay'),
+        });
+        const enterDelayScale = new Gtk.Scale({
+            adjustment: enterDelayAdj, draw_value: true, digits: 0,
+            width_request: 200, valign: Gtk.Align.CENTER,
+        });
+        enterDelayScale.set_format_value_func((_scale, value) => `${Math.round(value)} ms`);
+        enterDelayScale.connect('value-changed', () => {
+            settings.set_int('enter-after-paste-delay', Math.round(enterDelayAdj.get_value()));
+        });
+        enterDelayRow.add_suffix(enterDelayScale);
+        behaviorGroup.add(enterDelayRow);
+
+        // --- Design overrides group ---
+        const designOverridesGroup = new Adw.PreferencesGroup({
+            title: 'Design Overrides',
+            description: 'Fine-tune parameters of the current style',
+        });
+        advancedPage.add(designOverridesGroup);
 
         const advancedRow = new Adw.SwitchRow({
-            title: 'Advanced Settings',
-            subtitle: 'Fine-tune all parameters of the current style',
+            title: 'Enable Overrides',
+            subtitle: 'Show per-design parameter controls below',
         });
         settings.bind('advanced-settings', advancedRow, 'active', Gio.SettingsBindFlags.DEFAULT);
-        otherGroup.add(advancedRow);
+        designOverridesGroup.add(advancedRow);
 
         // Advanced settings panel state
         let advancedGroups = [];
 
         const destroyAdvancedGroups = () => {
             for (const g of advancedGroups) {
-                page.remove(g);
+                advancedPage.remove(g);
             }
             advancedGroups = [];
         };
@@ -398,7 +459,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
 
             const groups = _buildAdvancedGroups(settings, designs, designId);
             for (const g of groups) {
-                page.add(g);
+                advancedPage.add(g);
             }
             advancedGroups = groups;
         };
@@ -556,6 +617,36 @@ function _addShortcutRow(group, title, settingKey, settings, window) {
 
     row.add_suffix(button);
     group.add(row);
+}
+
+// --- Distro detection for install hints ---
+
+function _getInstallCommand() {
+    try {
+        const [ok, contents] = GLib.file_get_contents('/etc/os-release');
+        if (!ok) return 'sudo dnf install playerctl';
+        const text = new TextDecoder().decode(contents);
+        const idMatch = text.match(/^ID=(.+)$/m);
+        const id = idMatch ? idMatch[1].replace(/"/g, '').toLowerCase() : '';
+
+        if (['fedora', 'rhel', 'centos', 'nobara'].includes(id))
+            return 'sudo dnf install playerctl';
+        if (['ubuntu', 'debian', 'pop', 'linuxmint', 'elementary', 'zorin'].includes(id))
+            return 'sudo apt install playerctl';
+        if (['arch', 'manjaro', 'endeavouros', 'garuda', 'cachyos'].includes(id))
+            return 'sudo pacman -S playerctl';
+        if (['opensuse-tumbleweed', 'opensuse-leap', 'suse'].includes(id))
+            return 'sudo zypper install playerctl';
+        if (id === 'gentoo')
+            return 'sudo emerge media-sound/playerctl';
+        if (id === 'void')
+            return 'sudo xbps-install playerctl';
+        if (id === 'nixos')
+            return 'nix-env -iA nixpkgs.playerctl';
+    } catch (e) {
+        // ignore
+    }
+    return 'sudo dnf install playerctl';
 }
 
 // --- Advanced settings helpers ---

@@ -305,6 +305,10 @@ export default class VoicifyExtension extends Extension {
         }
 
         this._cleanupAnimationTimers();
+        if (this._enterAfterPasteTimer) {
+            GLib.Source.remove(this._enterAfterPasteTimer);
+            this._enterAfterPasteTimer = null;
+        }
 
         this._ungrabShortcut('_cancelAction');
         this._ungrabShortcut('_realtimeAction');
@@ -1168,10 +1172,22 @@ export default class VoicifyExtension extends Extension {
                 lastTime += 40;
             }
 
-            // Optional Enter after paste
+            // Optional Enter after paste (delayed so app has time to process clipboard)
             if (this._settings && this._settings.get_boolean('enter-after-paste')) {
-                this._virtualKeyboard.notify_keyval(lastTime + 10, Clutter.KEY_Return, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(lastTime + 20, Clutter.KEY_Return, Clutter.KeyState.RELEASED);
+                const delayMs = this._settings.get_int('enter-after-paste-delay');
+                if (this._enterAfterPasteTimer) GLib.Source.remove(this._enterAfterPasteTimer);
+                this._enterAfterPasteTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+                    this._enterAfterPasteTimer = null;
+                    try {
+                        if (!this._virtualKeyboard) return GLib.SOURCE_REMOVE;
+                        const t = global.get_current_time();
+                        this._virtualKeyboard.notify_keyval(t, Clutter.KEY_Return, Clutter.KeyState.PRESSED);
+                        this._virtualKeyboard.notify_keyval(t + 10, Clutter.KEY_Return, Clutter.KeyState.RELEASED);
+                    } catch (e) {
+                        console.debug('Enter after paste failed:', e.message);
+                    }
+                    return GLib.SOURCE_REMOVE;
+                });
             }
         } catch (error) {
             console.debug('Virtual keyboard paste failed:', error.message);
