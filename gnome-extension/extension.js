@@ -83,9 +83,10 @@ const VoicifyDBusInterface = `
       <arg name="stats_json" type="s" direction="out"/>
     </method>
     <method name="ResetRecordingStats"/>
-    <method name="SetTranscriptionModels">
+    <method name="SetTranscriptionConfig">
       <arg name="standard" type="s" direction="in"/>
       <arg name="realtime" type="s" direction="in"/>
+      <arg name="language" type="s" direction="in"/>
     </method>
     <signal name="RecordingStarted"/>
     <signal name="TranscriptionReady">
@@ -238,10 +239,13 @@ export default class VoicifyExtension extends Extension {
             this._settings.connect('changed::auto-pause-playback', () => this._syncAutoPausePlayback())
         );
         this._settingsChangedIds.push(
-            this._settings.connect('changed::transcription-model', () => this._sendTranscriptionModels())
+            this._settings.connect('changed::transcription-model', () => this._sendTranscriptionConfig())
         );
         this._settingsChangedIds.push(
-            this._settings.connect('changed::realtime-model', () => this._sendTranscriptionModels())
+            this._settings.connect('changed::realtime-model', () => this._sendTranscriptionConfig())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::transcription-language', () => this._sendTranscriptionConfig())
         );
 
         // Shortcut change handlers
@@ -2107,17 +2111,18 @@ export default class VoicifyExtension extends Extension {
         );
 
         // Send initial transcription models to daemon
-        this._sendTranscriptionModels();
+        this._sendTranscriptionConfig();
     }
 
-    _sendTranscriptionModels() {
+    _sendTranscriptionConfig() {
         if (!this._dbusProxy) return;
         try {
             const standard = this._settings.get_string('transcription-model');
             const realtime = this._settings.get_string('realtime-model');
-            this._dbusProxy.SetTranscriptionModelsRemote(standard, realtime);
+            const language = this._settings.get_string('transcription-language');
+            this._dbusProxy.SetTranscriptionConfigRemote(standard, realtime, language);
         } catch (e) {
-            console.debug(`Voicify: failed to send transcription models: ${e.message}`);
+            console.debug(`Voicify: failed to send transcription config: ${e.message}`);
         }
     }
 

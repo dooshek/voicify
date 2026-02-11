@@ -113,6 +113,11 @@
       <summary>Realtime transcription model</summary>
       <description>Model used for realtime streaming transcription (Ctrl+Super+V)</description>
     </key>
+    <key name="transcription-language" type="s">
+      <default>''</default>
+      <summary>Transcription language</summary>
+      <description>ISO 639-1 language code for transcription (empty = auto-detect)</description>
+    </key>
     <key name="shortcut-cancel" type="s">
       <default>'&lt;Ctrl&gt;&lt;Super&gt;x'</default>
       <summary>Cancel recording shortcut</summary>

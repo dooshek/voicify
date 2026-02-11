@@ -437,6 +437,47 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         });
         realtimeGroup.add(realtimeRow);
 
+        // --- Language group ---
+        const languageGroup = new Adw.PreferencesGroup({
+            title: 'Language',
+            description: 'Helps improve accuracy when you speak primarily in one language',
+        });
+        transcriptionPage.add(languageGroup);
+
+        const LANGUAGES = [
+            { id: '', name: 'Auto-detect', desc: 'Model detects language automatically' },
+            { id: 'pl', name: 'Polski', desc: 'Polish' },
+            { id: 'en', name: 'English', desc: 'English' },
+            { id: 'de', name: 'Deutsch', desc: 'German' },
+            { id: 'fr', name: 'Français', desc: 'French' },
+            { id: 'es', name: 'Español', desc: 'Spanish' },
+            { id: 'uk', name: 'Українська', desc: 'Ukrainian' },
+            { id: 'cs', name: 'Čeština', desc: 'Czech' },
+        ];
+
+        const languageModel = new Gtk.StringList();
+        for (const l of LANGUAGES) {
+            languageModel.append(l.name);
+        }
+
+        const languageRow = new Adw.ComboRow({
+            title: 'Language',
+            subtitle: LANGUAGES.find(l => l.id === settings.get_string('transcription-language'))?.desc || 'Auto-detect',
+            model: languageModel,
+        });
+
+        const curLangIdx = LANGUAGES.findIndex(l => l.id === settings.get_string('transcription-language'));
+        if (curLangIdx >= 0) languageRow.set_selected(curLangIdx);
+
+        languageRow.connect('notify::selected', () => {
+            const idx = languageRow.get_selected();
+            if (idx >= 0 && idx < LANGUAGES.length) {
+                settings.set_string('transcription-language', LANGUAGES[idx].id);
+                languageRow.subtitle = LANGUAGES[idx].desc;
+            }
+        });
+        languageGroup.add(languageRow);
+
         // Info row
         const infoGroup = new Adw.PreferencesGroup();
         transcriptionPage.add(infoGroup);

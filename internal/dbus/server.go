@@ -49,8 +49,9 @@ type Server struct {
 	statsManager       *stats.StatsManager
 	recordingStartTime time.Time
 	// model overrides from extension settings
-	transcriptionModel string
-	realtimeModel      string
+	transcriptionModel    string
+	realtimeModel         string
+	transcriptionLanguage string
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
@@ -79,20 +80,22 @@ func NewServer() (*Server, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Default transcription models - extension overrides via SetTranscriptionModels D-Bus call
+	// Default transcription settings - extension overrides via D-Bus
 	const defaultModel = "gpt-4o-mini-transcribe"
-	// Set in state so standard transcriber picks it up immediately
 	state.Get().Config.LLM.Transcription.Model = defaultModel
+	state.Get().Config.LLM.Transcription.Language = "" // auto-detect
+	state.Get().Config.LLM.Transcription.Provider = "openai"
 
 	return &Server{
-		recorder:           recorder,
-		realtimeRecorder:   realtimeRecorder,
-		statsManager:       statsManager,
-		transcriptionModel: defaultModel,
-		realtimeModel:      defaultModel,
-		isRealtimeMode:     false,
-		ctx:                ctx,
-		cancel:             cancel,
+		recorder:              recorder,
+		realtimeRecorder:      realtimeRecorder,
+		statsManager:          statsManager,
+		transcriptionModel:    defaultModel,
+		realtimeModel:         defaultModel,
+		transcriptionLanguage: "",
+		isRealtimeMode:        false,
+		ctx:                   ctx,
+		cancel:                cancel,
 	}, nil
 }
 
@@ -169,10 +172,11 @@ func (s *Server) Start() error {
 					Name: "ResetRecordingStats",
 				},
 				{
-					Name: "SetTranscriptionModels",
+					Name: "SetTranscriptionConfig",
 					Args: []introspect.Arg{
 						{Name: "standard", Type: "s", Direction: "in"},
 						{Name: "realtime", Type: "s", Direction: "in"},
+						{Name: "language", Type: "s", Direction: "in"},
 					},
 				},
 			},
@@ -325,10 +329,9 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 
 	s.recordingStartTime = time.Now()
 
-	// Set realtime model if overridden
-	if s.realtimeModel != "" {
-		s.realtimeRecorder.SetRealtimeModel(s.realtimeModel)
-	}
+	// Set realtime model and language
+	s.realtimeRecorder.SetRealtimeModel(s.realtimeModel)
+	s.realtimeRecorder.SetRealtimeLanguage(s.transcriptionLanguage)
 
 	// Start real-time recording
 	logger.Debugf("D-Bus: Starting real-time recording")
@@ -457,13 +460,12 @@ func (s *Server) ResetRecordingStats() *dbus.Error {
 	return nil
 }
 
-// SetTranscriptionModels sets the transcription models from extension settings (D-Bus method)
-func (s *Server) SetTranscriptionModels(standard string, realtime string) *dbus.Error {
+// SetTranscriptionConfig sets transcription models and language from extension settings (D-Bus method)
+func (s *Server) SetTranscriptionConfig(standard string, realtime string, language string) *dbus.Error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if standard != "" {
 		s.transcriptionModel = standard
-		// Update state so openai/groq transcriber picks it up
 		state.Get().Config.LLM.Transcription.Model = standard
 		logger.Debugf("D-Bus: Transcription model set to: %s", standard)
 	}
@@ -471,6 +473,9 @@ func (s *Server) SetTranscriptionModels(standard string, realtime string) *dbus.
 		s.realtimeModel = realtime
 		logger.Debugf("D-Bus: Realtime model set to: %s", realtime)
 	}
+	s.transcriptionLanguage = language
+	state.Get().Config.LLM.Transcription.Language = language
+	logger.Debugf("D-Bus: Transcription language set to: %q", language)
 	return nil
 }
 

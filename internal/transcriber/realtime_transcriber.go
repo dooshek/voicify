@@ -27,6 +27,7 @@ type RealtimeTranscriber struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	model          string
+	language       string
 }
 
 // RealtimeTranscriptionSession represents OpenAI session response
@@ -195,6 +196,13 @@ func (rt *RealtimeTranscriber) SetModel(model string) {
 	rt.model = model
 }
 
+// SetLanguage sets the transcription language for the next session
+func (rt *RealtimeTranscriber) SetLanguage(lang string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.language = lang
+}
+
 // TranscriptChan returns channel for complete transcripts
 func (rt *RealtimeTranscriber) TranscriptChan() <-chan string {
 	return rt.transcriptChan
@@ -247,7 +255,7 @@ func (rt *RealtimeTranscriber) configureSession() error {
 			InputAudioFormat: "pcm16",
 			InputAudioTranscription: TranscriptionConfig{
 				Model:    rt.getModel(),
-				Language: "pl",
+				Language: rt.language,
 			},
 			TurnDetection: &TurnDetectionConfig{
 				Type:              "server_vad",

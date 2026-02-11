@@ -169,6 +169,11 @@ func (rr *RealtimeRecorder) SetRealtimeModel(model string) {
 	rr.transcriber.SetModel(model)
 }
 
+// SetRealtimeLanguage sets the transcription language for the next realtime session
+func (rr *RealtimeRecorder) SetRealtimeLanguage(lang string) {
+	rr.transcriber.SetLanguage(lang)
+}
+
 // recordAndStream captures audio and streams it to OpenAI WebSocket
 func (rr *RealtimeRecorder) recordAndStream() {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
