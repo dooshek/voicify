@@ -103,6 +103,16 @@
       <default>'{}'</default>
       <summary>Per-design parameter overrides (JSON)</summary>
     </key>
+    <key name="transcription-model" type="s">
+      <default>'gpt-4o-mini-transcribe'</default>
+      <summary>Standard transcription model</summary>
+      <description>Model used for post-processing transcription (Ctrl+Super+C, Ctrl+Super+D)</description>
+    </key>
+    <key name="realtime-model" type="s">
+      <default>'gpt-4o-mini-transcribe'</default>
+      <summary>Realtime transcription model</summary>
+      <description>Model used for realtime streaming transcription (Ctrl+Super+V)</description>
+    </key>
     <key name="shortcut-cancel" type="s">
       <default>'&lt;Ctrl&gt;&lt;Super&gt;x'</default>
       <summary>Cancel recording shortcut</summary>

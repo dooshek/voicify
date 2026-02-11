@@ -13,6 +13,7 @@ import (
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/state"
+	"github.com/dooshek/voicify/internal/stats"
 	"github.com/dooshek/voicify/internal/transcriptionrouter"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
@@ -44,6 +45,12 @@ type Server struct {
 	// media playback state tracking
 	wasMediaPlaying   bool
 	autoPausePlayback bool
+	// stats tracking
+	statsManager       *stats.StatsManager
+	recordingStartTime time.Time
+	// model overrides from extension settings
+	transcriptionModel string
+	realtimeModel      string
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
@@ -63,14 +70,29 @@ func NewServer() (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize realtime recorder: %w", err)
 	}
 
+	// Initialize stats manager (graceful degradation if fails)
+	statsManager, err := stats.NewStatsManager()
+	if err != nil {
+		logger.Error("Failed to initialize stats manager, stats will be unavailable", err)
+		// continue without stats - graceful degradation
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Default transcription models - extension overrides via SetTranscriptionModels D-Bus call
+	const defaultModel = "gpt-4o-mini-transcribe"
+	// Set in state so standard transcriber picks it up immediately
+	state.Get().Config.LLM.Transcription.Model = defaultModel
+
 	return &Server{
-		recorder:         recorder,
-		realtimeRecorder: realtimeRecorder,
-		isRealtimeMode:   false, // Default to regular recording
-		ctx:              ctx,
-		cancel:           cancel,
+		recorder:           recorder,
+		realtimeRecorder:   realtimeRecorder,
+		statsManager:       statsManager,
+		transcriptionModel: defaultModel,
+		realtimeModel:      defaultModel,
+		isRealtimeMode:     false,
+		ctx:                ctx,
+		cancel:             cancel,
 	}, nil
 }
 
@@ -135,6 +157,22 @@ func (s *Server) Start() error {
 					Name: "SetAutoPausePlayback",
 					Args: []introspect.Arg{
 						{Name: "enabled", Type: "b", Direction: "in"},
+					},
+				},
+				{
+					Name: "GetRecordingStats",
+					Args: []introspect.Arg{
+						{Name: "stats_json", Type: "s", Direction: "out"},
+					},
+				},
+				{
+					Name: "ResetRecordingStats",
+				},
+				{
+					Name: "SetTranscriptionModels",
+					Args: []introspect.Arg{
+						{Name: "standard", Type: "s", Direction: "in"},
+						{Name: "realtime", Type: "s", Direction: "in"},
 					},
 				},
 			},
@@ -228,6 +266,7 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 		s.postTranscriptionRouterMode = false
 		s.isRealtimeMode = false
 
+		s.recordingStartTime = time.Now()
 		s.recorder.Start()
 		s.emitSignal("RecordingStarted")
 		s.startForwardingLevels()
@@ -257,6 +296,7 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 		s.postTranscriptionAutoPaste = false
 		s.isRealtimeMode = false
 
+		s.recordingStartTime = time.Now()
 		s.recorder.Start()
 		s.emitSignal("RecordingStarted")
 		s.startForwardingLevels()
@@ -282,6 +322,13 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 	s.isRealtimeMode = true
 	// reset accumulator for this session
 	s.realtimeAccum = ""
+
+	s.recordingStartTime = time.Now()
+
+	// Set realtime model if overridden
+	if s.realtimeModel != "" {
+		s.realtimeRecorder.SetRealtimeModel(s.realtimeModel)
+	}
 
 	// Start real-time recording
 	logger.Debugf("D-Bus: Starting real-time recording")
@@ -331,6 +378,13 @@ func (s *Server) CancelRecording() *dbus.Error {
 		// After cancelling realtime, route the accumulated transcription if present
 		finalText := s.realtimeAccum
 		s.realtimeAccum = "" // reset for next run
+
+		// Track stats for realtime recording
+		if s.statsManager != nil && finalText != "" {
+			duration := time.Since(s.recordingStartTime).Seconds()
+			s.statsManager.AddRecording(s.realtimeModel, duration)
+		}
+
 		if finalText != "" {
 			// Route via router
 			router := transcriptionrouter.New(finalText)
@@ -377,6 +431,46 @@ func (s *Server) SetAutoPausePlayback(enabled bool) *dbus.Error {
 	defer s.mu.Unlock()
 	s.autoPausePlayback = enabled
 	logger.Debugf("D-Bus: SetAutoPausePlayback = %v", enabled)
+	return nil
+}
+
+// GetRecordingStats returns recording statistics as JSON (D-Bus method)
+func (s *Server) GetRecordingStats() (string, *dbus.Error) {
+	if s.statsManager == nil {
+		return "{}", nil
+	}
+	json, err := s.statsManager.GetStatsJSON()
+	if err != nil {
+		return "{}", dbus.MakeFailedError(err)
+	}
+	return json, nil
+}
+
+// ResetRecordingStats resets all recording statistics (D-Bus method)
+func (s *Server) ResetRecordingStats() *dbus.Error {
+	if s.statsManager == nil {
+		return nil
+	}
+	if err := s.statsManager.Reset(); err != nil {
+		return dbus.MakeFailedError(err)
+	}
+	return nil
+}
+
+// SetTranscriptionModels sets the transcription models from extension settings (D-Bus method)
+func (s *Server) SetTranscriptionModels(standard string, realtime string) *dbus.Error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if standard != "" {
+		s.transcriptionModel = standard
+		// Update state so openai/groq transcriber picks it up
+		state.Get().Config.LLM.Transcription.Model = standard
+		logger.Debugf("D-Bus: Transcription model set to: %s", standard)
+	}
+	if realtime != "" {
+		s.realtimeModel = realtime
+		logger.Debugf("D-Bus: Realtime model set to: %s", realtime)
+	}
 	return nil
 }
 
@@ -470,6 +564,12 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 
 		logger.Debugf("D-Bus: Post-transcription auto-paste received: %s", transcription)
 
+		// Track recording stats
+		if s.statsManager != nil {
+			duration := time.Since(s.recordingStartTime).Seconds()
+			s.statsManager.AddRecording(s.transcriptionModel, duration)
+		}
+
 		// Copy to clipboard and trigger paste via extension
 		if err := clipboard.CopyToClipboard(transcription); err != nil {
 			logger.Error("D-Bus: Failed to copy to clipboard", err)
@@ -507,6 +607,12 @@ func (s *Server) stopPostTranscriptionRouterAsync() {
 		go s.resumeMediaPlayback()
 
 		logger.Debugf("D-Bus: Post-transcription router received: %s", transcription)
+
+		// Track recording stats
+		if s.statsManager != nil {
+			duration := time.Since(s.recordingStartTime).Seconds()
+			s.statsManager.AddRecording(s.transcriptionModel, duration)
+		}
 
 		// Route through router - plugins may call RequestPaste
 		router := transcriptionrouter.New(transcription)

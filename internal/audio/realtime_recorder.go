@@ -164,6 +164,11 @@ func (rr *RealtimeRecorder) LevelChan() <-chan float64 {
 	return rr.level.LevelChan
 }
 
+// SetRealtimeModel sets the transcription model for the next realtime session
+func (rr *RealtimeRecorder) SetRealtimeModel(model string) {
+	rr.transcriber.SetModel(model)
+}
+
 // recordAndStream captures audio and streams it to OpenAI WebSocket
 func (rr *RealtimeRecorder) recordAndStream() {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)

@@ -34,6 +34,8 @@ const ACCEL_MODS = Gdk.ModifierType.CONTROL_MASK |
 
 export default class VoicifyPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
+        window.set_default_size(500, 700);
+
         const settings = this.getSettings();
         const settingsHandlerIds = [];
 
@@ -358,7 +360,94 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         _addShortcutRow(shortcutsGroup, 'Post + router', 'shortcut-post-router', settings, window);
         _addShortcutRow(shortcutsGroup, 'Cancel', 'shortcut-cancel', settings, window);
 
-        // === Advanced page (third tab) ===
+        // === Transcription page (third tab) ===
+        const transcriptionPage = new Adw.PreferencesPage({
+            title: 'Transcription',
+            icon_name: 'audio-input-microphone-symbolic',
+        });
+        window.add(transcriptionPage);
+
+        // --- Standard transcription group ---
+        const standardGroup = new Adw.PreferencesGroup({
+            title: 'Post-processing',
+            description: 'Model for Ctrl+Super+C and Ctrl+Super+D modes',
+        });
+        transcriptionPage.add(standardGroup);
+
+        const STANDARD_MODELS = [
+            { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe', desc: 'Fast, cost-effective ($0.003/min)' },
+            { id: 'gpt-4o-transcribe', name: 'GPT-4o Transcribe', desc: 'Most accurate ($0.006/min)' },
+        ];
+
+        const standardModel = new Gtk.StringList();
+        for (const m of STANDARD_MODELS) {
+            standardModel.append(m.name);
+        }
+
+        const standardRow = new Adw.ComboRow({
+            title: 'Model',
+            subtitle: STANDARD_MODELS.find(m => m.id === settings.get_string('transcription-model'))?.desc || '',
+            model: standardModel,
+        });
+
+        const curStandardIdx = STANDARD_MODELS.findIndex(m => m.id === settings.get_string('transcription-model'));
+        if (curStandardIdx >= 0) standardRow.set_selected(curStandardIdx);
+
+        standardRow.connect('notify::selected', () => {
+            const idx = standardRow.get_selected();
+            if (idx >= 0 && idx < STANDARD_MODELS.length) {
+                settings.set_string('transcription-model', STANDARD_MODELS[idx].id);
+                standardRow.subtitle = STANDARD_MODELS[idx].desc;
+            }
+        });
+        standardGroup.add(standardRow);
+
+        // --- Realtime transcription group ---
+        const realtimeGroup = new Adw.PreferencesGroup({
+            title: 'Realtime',
+            description: 'Model for Ctrl+Super+V streaming mode',
+        });
+        transcriptionPage.add(realtimeGroup);
+
+        const REALTIME_MODELS = [
+            { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe', desc: 'Fast, cost-effective ($0.003/min)' },
+            { id: 'gpt-4o-transcribe', name: 'GPT-4o Transcribe', desc: 'Most accurate ($0.006/min)' },
+        ];
+
+        const realtimeModelList = new Gtk.StringList();
+        for (const m of REALTIME_MODELS) {
+            realtimeModelList.append(m.name);
+        }
+
+        const realtimeRow = new Adw.ComboRow({
+            title: 'Model',
+            subtitle: REALTIME_MODELS.find(m => m.id === settings.get_string('realtime-model'))?.desc || '',
+            model: realtimeModelList,
+        });
+
+        const curRealtimeIdx = REALTIME_MODELS.findIndex(m => m.id === settings.get_string('realtime-model'));
+        if (curRealtimeIdx >= 0) realtimeRow.set_selected(curRealtimeIdx);
+
+        realtimeRow.connect('notify::selected', () => {
+            const idx = realtimeRow.get_selected();
+            if (idx >= 0 && idx < REALTIME_MODELS.length) {
+                settings.set_string('realtime-model', REALTIME_MODELS[idx].id);
+                realtimeRow.subtitle = REALTIME_MODELS[idx].desc;
+            }
+        });
+        realtimeGroup.add(realtimeRow);
+
+        // Info row
+        const infoGroup = new Adw.PreferencesGroup();
+        transcriptionPage.add(infoGroup);
+
+        const infoRow = new Adw.ActionRow({
+            title: 'Pricing',
+            subtitle: 'GPT-4o Mini: $0.003/min \u00b7 GPT-4o: $0.006/min\nBoth models support Polish and 50+ languages',
+        });
+        infoGroup.add(infoRow);
+
+        // === Advanced page (fourth tab) ===
         const advancedPage = new Adw.PreferencesPage({
             title: 'Advanced',
             icon_name: 'preferences-other-symbolic',
@@ -529,12 +618,213 @@ export default class VoicifyPreferences extends ExtensionPreferences {
             })
         );
 
+        // === Stats page (fifth tab) ===
+        const statsPage = new Adw.PreferencesPage({
+            title: 'Stats',
+            icon_name: 'utilities-system-monitor-symbolic',
+        });
+        window.add(statsPage);
+
+        const statsGroup = new Adw.PreferencesGroup({
+            title: 'Recording Statistics',
+            description: 'Time spent recording per transcription model',
+        });
+        statsPage.add(statsGroup);
+
+        const statsLoadingRow = new Adw.ActionRow({
+            title: 'Loading...',
+            subtitle: 'Connecting to voicify daemon',
+        });
+        statsGroup.add(statsLoadingRow);
+
+        // D-Bus proxy for stats
+        const VoicifyStatsInterface = `
+<node>
+  <interface name="com.dooshek.voicify.Recorder">
+    <method name="GetRecordingStats">
+      <arg name="stats_json" type="s" direction="out"/>
+    </method>
+    <method name="ResetRecordingStats"/>
+  </interface>
+</node>`;
+        const StatsProxy = Gio.DBusProxy.makeProxyWrapper(VoicifyStatsInterface);
+
+        let statsProxy = null;
+        let statsRows = [];
+
+        const clearStatsRows = () => {
+            for (const r of statsRows) {
+                statsGroup.remove(r);
+            }
+            statsRows = [];
+        };
+
+        // OpenAI transcription pricing (USD per minute)
+        const MODEL_PRICING = {
+            'whisper-1': 0.006,
+            'gpt-4o-transcribe': 0.006,
+            'gpt-4o-mini-transcribe': 0.003,
+            // Groq models - free tier / very cheap
+            'whisper-large-v3': 0,
+            'whisper-large-v3-turbo': 0,
+            'distil-whisper-large-v3-en': 0,
+        };
+
+        const formatDuration = (totalSeconds) => {
+            const mins = Math.floor(totalSeconds / 60);
+            const secs = Math.round(totalSeconds % 60);
+            if (mins === 0) return `${secs}s`;
+            return `${mins}m ${secs}s`;
+        };
+
+        const formatCost = (usd) => {
+            if (usd === 0) return 'free';
+            if (usd < 0.01) return `$${usd.toFixed(4)}`;
+            return `$${usd.toFixed(2)}`;
+        };
+
+        const getModelCost = (model, totalSeconds) => {
+            const pricePerMin = MODEL_PRICING[model];
+            if (pricePerMin === undefined) return null;
+            return (totalSeconds / 60) * pricePerMin;
+        };
+
+        const refreshStats = () => {
+            if (!statsProxy) return;
+
+            try {
+                statsProxy.GetRecordingStatsRemote((result) => {
+                    clearStatsRows();
+                    statsGroup.remove(statsLoadingRow);
+
+                    let stats;
+                    try {
+                        stats = JSON.parse(result[0]);
+                    } catch (e) {
+                        const errorRow = new Adw.ActionRow({
+                            title: 'Error parsing stats',
+                            subtitle: String(e),
+                        });
+                        statsGroup.add(errorRow);
+                        statsRows.push(errorRow);
+                        return;
+                    }
+
+                    const models = stats.models || {};
+                    const modelKeys = Object.keys(models);
+
+                    if (modelKeys.length === 0) {
+                        const emptyRow = new Adw.ActionRow({
+                            title: 'No recordings yet',
+                            subtitle: 'Start recording to see statistics here',
+                        });
+                        statsGroup.add(emptyRow);
+                        statsRows.push(emptyRow);
+                    } else {
+                        let totalTime = 0;
+                        let totalCount = 0;
+                        let totalCost = 0;
+                        let allCostsKnown = true;
+
+                        for (const model of modelKeys) {
+                            const m = models[model];
+                            totalTime += m.total_seconds;
+                            totalCount += m.recording_count;
+
+                            const cost = getModelCost(model, m.total_seconds);
+                            if (cost !== null) {
+                                totalCost += cost;
+                            } else {
+                                allCostsKnown = false;
+                            }
+
+                            const costStr = cost !== null ? ` \u00b7 ${formatCost(cost)}` : '';
+
+                            const row = new Adw.ActionRow({
+                                title: model,
+                                subtitle: `${m.recording_count} recording${m.recording_count !== 1 ? 's' : ''}${costStr}`,
+                            });
+
+                            const label = new Gtk.Label({
+                                label: formatDuration(m.total_seconds),
+                                css_classes: ['dim-label'],
+                                valign: Gtk.Align.CENTER,
+                            });
+                            row.add_suffix(label);
+                            statsGroup.add(row);
+                            statsRows.push(row);
+                        }
+
+                        // Total summary row
+                        const costSuffix = allCostsKnown ? ` \u00b7 ${formatCost(totalCost)}` : '';
+                        const totalRow = new Adw.ActionRow({
+                            title: 'Total',
+                            subtitle: `${totalCount} recording${totalCount !== 1 ? 's' : ''}${modelKeys.length > 1 ? ` across ${modelKeys.length} models` : ''}${costSuffix}`,
+                        });
+                        const totalLabel = new Gtk.Label({
+                            label: formatDuration(totalTime),
+                            css_classes: ['accent'],
+                            valign: Gtk.Align.CENTER,
+                        });
+                        totalRow.add_suffix(totalLabel);
+                        statsGroup.add(totalRow);
+                        statsRows.push(totalRow);
+                    }
+
+                    // Reset button
+                    const resetRow = new Adw.ActionRow();
+                    const resetBtn = new Gtk.Button({
+                        label: 'Reset Statistics',
+                        halign: Gtk.Align.CENTER,
+                        hexpand: true,
+                        valign: Gtk.Align.CENTER,
+                    });
+                    resetBtn.add_css_class('destructive-action');
+                    resetBtn.connect('clicked', () => {
+                        statsProxy.ResetRecordingStatsRemote(() => {
+                            refreshStats();
+                        });
+                    });
+                    resetRow.set_child(resetBtn);
+                    statsGroup.add(resetRow);
+                    statsRows.push(resetRow);
+                });
+            } catch (e) {
+                clearStatsRows();
+                statsGroup.remove(statsLoadingRow);
+                const errorRow = new Adw.ActionRow({
+                    title: 'Cannot connect to daemon',
+                    subtitle: 'Make sure voicify daemon is running',
+                });
+                statsGroup.add(errorRow);
+                statsRows.push(errorRow);
+            }
+        };
+
+        try {
+            statsProxy = new StatsProxy(
+                Gio.DBus.session,
+                'com.dooshek.voicify',
+                '/com/dooshek/voicify/Recorder'
+            );
+            refreshStats();
+        } catch (e) {
+            statsGroup.remove(statsLoadingRow);
+            const errorRow = new Adw.ActionRow({
+                title: 'Cannot connect to daemon',
+                subtitle: 'Make sure voicify daemon is running',
+            });
+            statsGroup.add(errorRow);
+            statsRows.push(errorRow);
+        }
+
         // Cleanup on window close
         window.connect('close-request', () => {
             for (const id of settingsHandlerIds) {
                 settings.disconnect(id);
             }
             settingsHandlerIds.length = 0;
+            statsProxy = null;
             return false;
         });
     }

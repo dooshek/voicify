@@ -120,7 +120,7 @@ func RunWizard() error {
 				},
 				Transcription: types.LLMTranscription{
 					Provider: string(types.ProviderOpenAI),
-					Model:    string(types.OpenAIModelWhisper1),
+					Model:    "gpt-4o-mini-transcribe",
 					Language: "en",
 				},
 				Router: types.LLMRouter{

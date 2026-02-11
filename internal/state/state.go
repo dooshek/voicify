@@ -56,10 +56,6 @@ func (s *AppState) GetRouterProvider() types.LLMProvider {
 	return types.LLMProvider(s.Config.LLM.Router.Provider)
 }
 
-func (s *AppState) GetTranscriptionModel() string {
-	return s.Config.LLM.Transcription.Model
-}
-
 func (s *AppState) GetRouterModel() string {
 	return s.Config.LLM.Router.Model
 }

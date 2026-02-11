@@ -26,6 +26,7 @@ type RealtimeTranscriber struct {
 	errorChan      chan error
 	ctx            context.Context
 	cancel         context.CancelFunc
+	model          string
 }
 
 // RealtimeTranscriptionSession represents OpenAI session response
@@ -187,6 +188,13 @@ func (rt *RealtimeTranscriber) SendAudio(pcmData []byte) error {
 	return rt.conn.WriteMessage(websocket.TextMessage, []byte(audioData))
 }
 
+// SetModel sets the transcription model for the next session
+func (rt *RealtimeTranscriber) SetModel(model string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.model = model
+}
+
 // TranscriptChan returns channel for complete transcripts
 func (rt *RealtimeTranscriber) TranscriptChan() <-chan string {
 	return rt.transcriptChan
@@ -238,7 +246,7 @@ func (rt *RealtimeTranscriber) configureSession() error {
 		Session: SessionConfig{
 			InputAudioFormat: "pcm16",
 			InputAudioTranscription: TranscriptionConfig{
-				Model:    "gpt-4o-transcribe",
+				Model:    rt.getModel(),
 				Language: "pl",
 			},
 			TurnDetection: &TurnDetectionConfig{
@@ -261,6 +269,13 @@ func (rt *RealtimeTranscriber) configureSession() error {
 	}
 
 	return rt.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+func (rt *RealtimeTranscriber) getModel() string {
+	if rt.model != "" {
+		return rt.model
+	}
+	return "gpt-4o-mini-transcribe"
 }
 
 // handleMessages processes incoming WebSocket messages

@@ -79,6 +79,14 @@ const VoicifyDBusInterface = `
     <method name="SetAutoPausePlayback">
       <arg name="enabled" type="b" direction="in"/>
     </method>
+    <method name="GetRecordingStats">
+      <arg name="stats_json" type="s" direction="out"/>
+    </method>
+    <method name="ResetRecordingStats"/>
+    <method name="SetTranscriptionModels">
+      <arg name="standard" type="s" direction="in"/>
+      <arg name="realtime" type="s" direction="in"/>
+    </method>
     <signal name="RecordingStarted"/>
     <signal name="TranscriptionReady">
       <arg name="text" type="s"/>
@@ -228,6 +236,12 @@ export default class VoicifyExtension extends Extension {
         );
         this._settingsChangedIds.push(
             this._settings.connect('changed::auto-pause-playback', () => this._syncAutoPausePlayback())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::transcription-model', () => this._sendTranscriptionModels())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::realtime-model', () => this._sendTranscriptionModels())
         );
 
         // Shortcut change handlers
@@ -2091,6 +2105,20 @@ export default class VoicifyExtension extends Extension {
                 this._onRequestPaste(text);
             })
         );
+
+        // Send initial transcription models to daemon
+        this._sendTranscriptionModels();
+    }
+
+    _sendTranscriptionModels() {
+        if (!this._dbusProxy) return;
+        try {
+            const standard = this._settings.get_string('transcription-model');
+            const realtime = this._settings.get_string('realtime-model');
+            this._dbusProxy.SetTranscriptionModelsRemote(standard, realtime);
+        } catch (e) {
+            console.debug(`Voicify: failed to send transcription models: ${e.message}`);
+        }
     }
 
     // --- D-Bus service file ---
