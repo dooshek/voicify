@@ -85,6 +85,9 @@ func mergeConfigs(targetConfig, sourceConfig *types.Config) {
 	if sourceConfig.LLM.Keys.GroqKey != "" {
 		targetConfig.LLM.Keys.GroqKey = sourceConfig.LLM.Keys.GroqKey
 	}
+	if sourceConfig.LLM.Keys.EntropycoreKey != "" {
+		targetConfig.LLM.Keys.EntropycoreKey = sourceConfig.LLM.Keys.EntropycoreKey
+	}
 
 	// Update LLM Transcription settings if set
 	if sourceConfig.LLM.Transcription.Provider != "" {

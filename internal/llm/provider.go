@@ -47,6 +47,10 @@ func NewProvider(providerType types.LLMProvider) (Provider, error) {
 		if llmKeys.GroqKey != "" {
 			return NewGroqProvider(llmKeys.GroqKey), nil
 		}
+	case types.ProviderEntropycore:
+		if llmKeys.EntropycoreKey != "" {
+			return NewEntropycoreProvider(llmKeys.EntropycoreKey), nil
+		}
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
 	}

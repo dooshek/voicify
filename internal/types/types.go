@@ -35,8 +35,9 @@ type YdotoolConfig struct {
 type LLMProvider string
 
 const (
-	ProviderOpenAI LLMProvider = "openai"
-	ProviderGroq   LLMProvider = "groq"
+	ProviderOpenAI      LLMProvider = "openai"
+	ProviderGroq        LLMProvider = "groq"
+	ProviderEntropycore LLMProvider = "entropycore"
 )
 
 type LLMConfig struct {
@@ -46,8 +47,9 @@ type LLMConfig struct {
 }
 
 type LLMKeys struct {
-	OpenAIKey string `yaml:"openai_api_key"`
-	GroqKey   string `yaml:"groq_api_key"`
+	OpenAIKey      string `yaml:"openai_api_key"`
+	GroqKey        string `yaml:"groq_api_key"`
+	EntropycoreKey string `yaml:"entropycore_api_key"`
 }
 
 type LLMTranscription struct {
@@ -64,12 +66,12 @@ type LLMRouter struct {
 
 // TTSConfig holds configuration for Text-to-Speech
 type TTSConfig struct {
-	Provider       string            `yaml:"provider"`        // "openai", "realtime", "elevenlabs"
-	Voice          string            `yaml:"voice"`           // default voice to use
-	SystemPrompt   string            `yaml:"system_prompt"`   // Template for TTS instructions (use %s for text)
-	Speed          float64           `yaml:"speed"`           // Speaking speed (0.25-4.0)
-	OpenAI         TTSOpenAIConfig   `yaml:"openai"`
-	Realtime       TTSRealtimeConfig `yaml:"realtime"`
+	Provider     string            `yaml:"provider"`      // "openai", "realtime", "elevenlabs"
+	Voice        string            `yaml:"voice"`         // default voice to use
+	SystemPrompt string            `yaml:"system_prompt"` // Template for TTS instructions (use %s for text)
+	Speed        float64           `yaml:"speed"`         // Speaking speed (0.25-4.0)
+	OpenAI       TTSOpenAIConfig   `yaml:"openai"`
+	Realtime     TTSRealtimeConfig `yaml:"realtime"`
 }
 
 // TTSOpenAIConfig holds OpenAI TTS specific configuration
@@ -84,7 +86,6 @@ type TTSRealtimeConfig struct {
 	Model string  `yaml:"model"` // "gpt-4o-realtime-preview" or "gpt-4o-mini-realtime-preview"
 	Speed float64 `yaml:"speed"` // Not directly supported, default 1.0
 }
-
 
 type Config struct {
 	RecordKey KeyBinding    `yaml:"record_key"`

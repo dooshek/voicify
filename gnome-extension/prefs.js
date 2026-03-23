@@ -377,6 +377,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         const STANDARD_MODELS = [
             { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe', desc: 'Fast, cost-effective ($0.003/min)' },
             { id: 'gpt-4o-transcribe', name: 'GPT-4o Transcribe', desc: 'Most accurate ($0.006/min)' },
+            { id: 'entropycore-whisper-large', name: 'Entropycore Whisper Large', desc: 'Self-hosted Whisper large-v3' },
         ];
 
         const standardModel = new Gtk.StringList();
@@ -484,7 +485,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
 
         const infoRow = new Adw.ActionRow({
             title: 'Pricing',
-            subtitle: 'GPT-4o Mini: $0.003/min \u00b7 GPT-4o: $0.006/min\nBoth models support Polish and 50+ languages',
+            subtitle: 'GPT-4o Mini: $0.003/min \u00b7 GPT-4o: $0.006/min \u00b7 Entropycore: free\nAll models support Polish and 50+ languages',
         });
         infoGroup.add(infoRow);
 
