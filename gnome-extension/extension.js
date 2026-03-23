@@ -1191,7 +1191,8 @@ export default class VoicifyExtension extends Extension {
             }
 
             // Optional Enter after paste (delayed so app has time to process clipboard)
-            if (this._settings && this._settings.get_boolean('enter-after-paste')) {
+            // Skip in realtime mode - user may still be speaking
+            if (!this._isRealtimeMode && this._settings && this._settings.get_boolean('enter-after-paste')) {
                 const delayMs = this._settings.get_int('enter-after-paste-delay');
                 if (this._enterAfterPasteTimer) GLib.Source.remove(this._enterAfterPasteTimer);
                 this._enterAfterPasteTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
