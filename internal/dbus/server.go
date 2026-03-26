@@ -52,6 +52,8 @@ type Server struct {
 	transcriptionModel    string
 	realtimeModel         string
 	transcriptionLanguage string
+	// handsfree profile switching
+	handsfreeManager *audio.HandsfreeManager
 }
 
 // NewServer creates a new D-Bus server instance with silent notifications
@@ -94,6 +96,7 @@ func NewServer() (*Server, error) {
 		realtimeModel:         defaultModel,
 		transcriptionLanguage: "",
 		isRealtimeMode:        false,
+		handsfreeManager:      audio.NewHandsfreeManager(),
 		ctx:                   ctx,
 		cancel:                cancel,
 	}, nil
@@ -177,6 +180,13 @@ func (s *Server) Start() error {
 						{Name: "standard", Type: "s", Direction: "in"},
 						{Name: "realtime", Type: "s", Direction: "in"},
 						{Name: "language", Type: "s", Direction: "in"},
+					},
+				},
+				{
+					Name: "SetHandsfreeConfig",
+					Args: []introspect.Arg{
+						{Name: "enabled", Type: "b", Direction: "in"},
+						{Name: "device", Type: "s", Direction: "in"},
 					},
 				},
 			},
@@ -270,6 +280,9 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 		s.postTranscriptionRouterMode = false
 		s.isRealtimeMode = false
 
+		s.handsfreeManager.SwitchToHandsfree()
+		s.recorder.SetCaptureSource(s.handsfreeManager.GetBTSource())
+
 		s.recordingStartTime = time.Now()
 		s.recorder.Start()
 		s.emitSignal("RecordingStarted")
@@ -299,6 +312,9 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 		s.postTranscriptionRouterMode = true
 		s.postTranscriptionAutoPaste = false
 		s.isRealtimeMode = false
+
+		s.handsfreeManager.SwitchToHandsfree()
+		s.recorder.SetCaptureSource(s.handsfreeManager.GetBTSource())
 
 		s.recordingStartTime = time.Now()
 		s.recorder.Start()
@@ -332,6 +348,8 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 	// Set realtime model and language
 	s.realtimeRecorder.SetRealtimeModel(s.realtimeModel)
 	s.realtimeRecorder.SetRealtimeLanguage(s.transcriptionLanguage)
+
+	s.handsfreeManager.SwitchToHandsfree()
 
 	// Start real-time recording
 	logger.Debugf("D-Bus: Starting real-time recording")
@@ -375,7 +393,7 @@ func (s *Server) CancelRecording() *dbus.Error {
 		s.stopForwardingRealtimeTranscription()
 		s.stopForwardingRealtimeLevels()
 
-		// Resume media playback after recording stops
+		go s.handsfreeManager.RestoreProfile()
 		go s.resumeMediaPlayback()
 
 		// After cancelling realtime, route the accumulated transcription if present
@@ -409,7 +427,7 @@ func (s *Server) CancelRecording() *dbus.Error {
 		s.recorder.Cancel()
 		s.stopForwardingLevels()
 
-		// Resume media playback after recording stops
+		go s.handsfreeManager.RestoreProfile()
 		go s.resumeMediaPlayback()
 	}
 
@@ -476,6 +494,13 @@ func (s *Server) SetTranscriptionConfig(standard string, realtime string, langua
 	s.transcriptionLanguage = language
 	state.Get().Config.LLM.Transcription.Language = language
 	logger.Debugf("D-Bus: Transcription language set to: %q", language)
+	return nil
+}
+
+// SetHandsfreeConfig enables/disables BT handsfree profile switching (D-Bus method)
+func (s *Server) SetHandsfreeConfig(enabled bool, device string) *dbus.Error {
+	s.handsfreeManager.SetConfig(enabled, device)
+	logger.Debugf("D-Bus: Handsfree config set: enabled=%v, device=%s", enabled, device)
 	return nil
 }
 
@@ -553,6 +578,7 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 		logger.Debugf("D-Bus: Stopping post-transcription auto-paste recording")
 
 		transcription, err := s.recorder.Stop()
+		go s.handsfreeManager.RestoreProfile()
 		if err != nil {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())
@@ -597,6 +623,7 @@ func (s *Server) stopPostTranscriptionRouterAsync() {
 		logger.Debugf("D-Bus: Stopping post-transcription router recording")
 
 		transcription, err := s.recorder.Stop()
+		go s.handsfreeManager.RestoreProfile()
 		if err != nil {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())

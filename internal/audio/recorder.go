@@ -47,6 +47,8 @@ type Recorder struct {
 	resultChan         chan recordingResult
 	// Live input level streaming
 	level *LevelProcessor
+	// PipeWire source for BT handsfree (empty = use miniaudio default)
+	captureSource string
 }
 
 type recordingResult struct {
@@ -93,6 +95,12 @@ func (r *Recorder) IsRecording() bool {
 	return r.isRecording
 }
 
+// SetCaptureSource sets a specific PipeWire source for recording (e.g. BT handsfree mic).
+// Pass empty string to use default device via miniaudio.
+func (r *Recorder) SetCaptureSource(source string) {
+	r.captureSource = source
+}
+
 func (r *Recorder) Start() {
 	if r.isRecording {
 		return
@@ -101,7 +109,11 @@ func (r *Recorder) Start() {
 	r.isRecording = true
 	r.cancelled = false
 	r.recordingStartTime = time.Now()
-	go r.record()
+	if r.captureSource != "" {
+		go r.recordWithParec()
+	} else {
+		go r.record()
+	}
 	go r.updateRecordingTime()
 
 	logger.Info("🎙️  Recording started...")
@@ -239,6 +251,118 @@ func (r *Recorder) record() {
 	os.Remove(oggPath)
 
 	// Send the result
+	r.resultChan <- recordingResult{text, nil}
+}
+
+// recordWithParec records via parecord (PipeWire native) from a specific source.
+// Used for BT handsfree - miniaudio doesn't follow PipeWire routing.
+func (r *Recorder) recordWithParec() {
+	source := r.captureSource
+	r.captureSource = "" // clear for next recording
+	logger.Infof("Recording via parecord from source: %s", source)
+
+	cmd := exec.Command("parecord",
+		"--device="+source,
+		"--format=s16le",
+		"--rate=16000",
+		"--channels=1",
+		"--raw",
+		"--latency-msec=10",
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		logger.Error("Error creating parecord pipe", err)
+		r.resultChan <- recordingResult{"", fmt.Errorf("parecord pipe error: %w", err)}
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		logger.Error("Error starting parecord", err)
+		r.resultChan <- recordingResult{"", fmt.Errorf("parecord start error: %w", err)}
+		return
+	}
+
+	var audioBuffer bytes.Buffer
+	// Small buffer for responsive level updates (320 bytes = 10ms at 16kHz mono s16le)
+	buf := make([]byte, 320)
+
+	for r.isRecording {
+		n, err := stdout.Read(buf)
+		if err != nil {
+			break
+		}
+		if n > 0 {
+			audioBuffer.Write(buf[:n])
+			r.level.Process(buf[:n])
+		}
+	}
+
+	cmd.Process.Kill()
+	cmd.Wait()
+
+	logger.Infof("Parecord captured %d bytes (%.1f seconds)", audioBuffer.Len(), float64(audioBuffer.Len())/(2.0*float64(sampleRate)))
+
+	if r.cancelled {
+		logger.Debugf("Recording was cancelled, discarding audio data")
+		return
+	}
+
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	wavFilename := fmt.Sprintf("recording_%s.wav", timestamp)
+	oggFilename := strings.TrimSuffix(wavFilename, ".wav") + ".ogg"
+
+	wavData, err := convertPCMToWAV(audioBuffer.Bytes(), channels, sampleRate)
+	if err != nil {
+		logger.Error("Error converting to WAV", err)
+		r.resultChan <- recordingResult{"", fmt.Errorf("wav conversion error: %w", err)}
+		return
+	}
+
+	wavPath := filepath.Join(r.fileOps.GetRecordingsDir(), wavFilename)
+	os.WriteFile(wavPath, wavData, 0o644)
+
+	logger.Info("🎙️ Processing audio...")
+
+	// BT handsfree mic is inherently quiet (~-70dB) - boost 30dB before silence removal
+	oggPath := filepath.Join(r.fileOps.GetRecordingsDir(), oggFilename)
+	err = ffmpeg.Input(wavPath).
+		Output(oggPath, ffmpeg.KwArgs{
+			"loglevel":          "quiet",
+			"acodec":            "libvorbis",
+			"b:a":               "24k",
+			"ar":                "16000",
+			"compression_level": "5",
+			"threads":           "auto",
+			"af":                "volume=10dB,silenceremove=start_periods=1:start_duration=0.1:start_threshold=-60dB:detection=peak:stop_periods=-1:stop_duration=0.2:stop_threshold=-60dB",
+		}).
+		OverWriteOutput().
+		Run()
+	if err != nil {
+		logger.Error("Error converting to Ogg Vorbis", err)
+		r.resultChan <- recordingResult{"", fmt.Errorf("ogg conversion error: %w", err)}
+		return
+	}
+
+	logger.Info("🎙️ Transcribing audio...")
+	r.notifier.NotifyTranscribing()
+
+	transcriptionStartTime := time.Now()
+	text, err := r.transcriber.TranscribeFile(oggPath)
+	if err != nil {
+		logger.Error("Transcription failed", err)
+		r.resultChan <- recordingResult{"", fmt.Errorf("transcription error: %w", err)}
+		return
+	}
+	logger.Debugf("Transcription took: %d ms", time.Since(transcriptionStartTime).Milliseconds())
+	logger.Infof("📝 Transcription: %s", text)
+
+	r.notifier.NotifyTranscriptionComplete()
+	r.notifier.PlayTranscriptionOverBeep()
+
+	os.Remove(wavPath)
+	os.Remove(oggPath)
+
 	r.resultChan <- recordingResult{text, nil}
 }
 

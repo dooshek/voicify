@@ -36,6 +36,17 @@ sleep 2
 STATUS=$(gnome-extensions info voicify@dooshek.com 2>/dev/null | grep State | awk '{print $2}')
 DAEMON=$(pgrep -f "voicify --daemon" >/dev/null 2>&1 && echo "running" || echo "dead")
 
+# Sync handsfree config from GSettings to new daemon (Wayland: old extension JS can't send it)
+SCHEMA_DIR="$HOME/.local/share/gnome-shell/extensions/voicify@dooshek.com/schemas/"
+HF_ENABLED=$(GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get org.gnome.shell.extensions.voicify handsfree-enabled 2>/dev/null)
+HF_DEVICE=$(GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get org.gnome.shell.extensions.voicify handsfree-device 2>/dev/null | tr -d "'")
+if [ "$HF_ENABLED" = "true" ] && [ -n "$HF_DEVICE" ]; then
+    gdbus call --session --dest com.dooshek.voicify \
+        --object-path /com/dooshek/voicify/Recorder \
+        --method com.dooshek.voicify.Recorder.SetHandsfreeConfig true "$HF_DEVICE" >/dev/null 2>&1
+    echo "Handsfree config synced: $HF_DEVICE"
+fi
+
 echo ""
 echo "=== Done: Extension=$STATUS Daemon=$DAEMON ==="
 [ "$XDG_SESSION_TYPE" = "wayland" ] && echo "UWAGA: Na Wayland zmiany JS wymagają logout/login!"

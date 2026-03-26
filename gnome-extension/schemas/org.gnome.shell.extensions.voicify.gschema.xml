@@ -118,6 +118,14 @@
       <summary>Transcription language</summary>
       <description>ISO 639-1 language code for transcription (empty = auto-detect)</description>
     </key>
+    <key name="handsfree-enabled" type="b">
+      <default>false</default>
+      <summary>Switch Bluetooth to handsfree during recording</summary>
+    </key>
+    <key name="handsfree-device" type="s">
+      <default>''</default>
+      <summary>Bluetooth device card name for handsfree</summary>
+    </key>
     <key name="shortcut-cancel" type="s">
       <default>'&lt;Ctrl&gt;&lt;Super&gt;x'</default>
       <summary>Cancel recording shortcut</summary>

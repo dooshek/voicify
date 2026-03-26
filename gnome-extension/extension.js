@@ -88,6 +88,10 @@ const VoicifyDBusInterface = `
       <arg name="realtime" type="s" direction="in"/>
       <arg name="language" type="s" direction="in"/>
     </method>
+    <method name="SetHandsfreeConfig">
+      <arg name="enabled" type="b" direction="in"/>
+      <arg name="device" type="s" direction="in"/>
+    </method>
     <signal name="RecordingStarted"/>
     <signal name="TranscriptionReady">
       <arg name="text" type="s"/>
@@ -247,6 +251,12 @@ export default class VoicifyExtension extends Extension {
         this._settingsChangedIds.push(
             this._settings.connect('changed::transcription-language', () => this._sendTranscriptionConfig())
         );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::handsfree-enabled', () => this._syncHandsfreeConfig())
+        );
+        this._settingsChangedIds.push(
+            this._settings.connect('changed::handsfree-device', () => this._syncHandsfreeConfig())
+        );
 
         // Shortcut change handlers
         this._settingsChangedIds.push(
@@ -286,6 +296,7 @@ export default class VoicifyExtension extends Extension {
 
         this._initDBusProxy();
         this._syncAutoPausePlayback();
+        this._syncHandsfreeConfig();
         this._createIndicator();
 
         // Grab shortcuts from settings
@@ -501,6 +512,14 @@ export default class VoicifyExtension extends Extension {
         const enabled = this._settings.get_boolean('auto-pause-playback');
         this._dbusProxy.SetAutoPausePlaybackAsync(enabled)
             .catch(e => console.debug('Voicify: SetAutoPausePlayback failed:', e.message));
+    }
+
+    _syncHandsfreeConfig() {
+        if (!this._dbusProxy || !this._settings) return;
+        const enabled = this._settings.get_boolean('handsfree-enabled');
+        const device = this._settings.get_string('handsfree-device');
+        this._dbusProxy.SetHandsfreeConfigAsync(enabled, device)
+            .catch(e => console.debug('Voicify: SetHandsfreeConfig failed:', e.message));
     }
 
     _applyTheme() {
@@ -2111,8 +2130,9 @@ export default class VoicifyExtension extends Extension {
             })
         );
 
-        // Send initial transcription models to daemon
+        // Send initial config to daemon
         this._sendTranscriptionConfig();
+        this._syncHandsfreeConfig();
     }
 
     _sendTranscriptionConfig() {

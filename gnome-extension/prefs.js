@@ -479,6 +479,68 @@ export default class VoicifyPreferences extends ExtensionPreferences {
         });
         languageGroup.add(languageRow);
 
+        // --- Handsfree group ---
+        const handsfreeGroup = new Adw.PreferencesGroup({
+            title: 'Bluetooth Handsfree',
+            description: 'Switch headset to microphone mode during recording',
+        });
+        transcriptionPage.add(handsfreeGroup);
+
+        const handsfreeSwitch = new Adw.SwitchRow({
+            title: 'Use Bluetooth handsfree',
+            subtitle: 'Switches headset to HSP/HFP for mic, then back to A2DP',
+        });
+        handsfreeSwitch.set_active(settings.get_boolean('handsfree-enabled'));
+        handsfreeSwitch.connect('notify::active', () => {
+            settings.set_boolean('handsfree-enabled', handsfreeSwitch.get_active());
+        });
+        handsfreeGroup.add(handsfreeSwitch);
+
+        const btDeviceModel = new Gtk.StringList();
+        btDeviceModel.append('(none)');
+        let btDevices = [];
+        try {
+            const [ok, stdout] = GLib.spawn_command_line_sync('pactl list cards');
+            if (ok && stdout) {
+                const output = new TextDecoder().decode(stdout);
+                for (const block of output.split('Card #')) {
+                    let cardName = '', description = '', hasHandsfree = false;
+                    for (const line of block.split('\n')) {
+                        const t = line.trim();
+                        if (t.startsWith('Name: ')) cardName = t.substring(6);
+                        if (t.startsWith('device.description = ')) description = t.substring(21).replace(/"/g, '');
+                        if (t.startsWith('headset-head-unit')) hasHandsfree = true;
+                    }
+                    if (cardName.startsWith('bluez_card.') && hasHandsfree) {
+                        btDevices.push({ cardName, description });
+                        btDeviceModel.append(description || cardName);
+                    }
+                }
+            }
+        } catch (e) {
+            console.debug(`Voicify: failed to list BT devices: ${e.message}`);
+        }
+
+        const btDeviceRow = new Adw.ComboRow({
+            title: 'Device',
+            subtitle: btDevices.length > 0 ? `${btDevices.length} device(s) found` : 'No Bluetooth audio devices found',
+            model: btDeviceModel,
+            sensitive: handsfreeSwitch.get_active(),
+        });
+        const currentDevice = settings.get_string('handsfree-device');
+        if (currentDevice) {
+            const idx = btDevices.findIndex(d => d.cardName === currentDevice);
+            if (idx >= 0) btDeviceRow.set_selected(idx + 1);
+        }
+        btDeviceRow.connect('notify::selected', () => {
+            const idx = btDeviceRow.get_selected();
+            settings.set_string('handsfree-device', idx > 0 && idx <= btDevices.length ? btDevices[idx - 1].cardName : '');
+        });
+        handsfreeSwitch.connect('notify::active', () => {
+            btDeviceRow.set_sensitive(handsfreeSwitch.get_active());
+        });
+        handsfreeGroup.add(btDeviceRow);
+
         // Info row
         const infoGroup = new Adw.PreferencesGroup();
         transcriptionPage.add(infoGroup);

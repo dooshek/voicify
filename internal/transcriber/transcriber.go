@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dooshek/voicify/internal/fileops"
 	"github.com/dooshek/voicify/internal/llm"
@@ -64,12 +65,6 @@ func (t *Transcriber) getProvider() (llm.Provider, error) {
 
 func (t *Transcriber) TranscribeFile(filename string) (string, error) {
 	logger.Debugf("Starting transcription of file: %s", filename)
-	audioFile, err := os.Open(filename)
-	if err != nil {
-		logger.Error("Error opening audio file", err)
-		return "", fmt.Errorf("error opening audio file: %w", err)
-	}
-	defer audioFile.Close()
 
 	provider, err := t.getProvider()
 	if err != nil {
@@ -77,12 +72,36 @@ func (t *Transcriber) TranscribeFile(filename string) (string, error) {
 		return "", err
 	}
 
-	text, err := provider.TranscribeAudio(context.Background(), filename, audioFile)
-	if err != nil {
-		logger.Error("Error during transcription", err)
-		return "", fmt.Errorf("error transcribing audio: %w", err)
+	const maxRetries = 4
+	delay := 2 * time.Second
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		audioFile, err := os.Open(filename)
+		if err != nil {
+			logger.Error("Error opening audio file", err)
+			return "", fmt.Errorf("error opening audio file: %w", err)
+		}
+
+		text, err := provider.TranscribeAudio(context.Background(), filename, audioFile)
+		audioFile.Close()
+
+		if err == nil {
+			if attempt > 1 {
+				logger.Infof("Transcription succeeded on attempt %d/%d", attempt, maxRetries)
+			}
+			logger.Debug("Transcription completed successfully")
+			return text, nil
+		}
+
+		lastErr = err
+		if attempt < maxRetries {
+			logger.Warnf("Transcription attempt %d/%d failed, retrying in %v: %v", attempt, maxRetries, delay, err)
+			time.Sleep(delay)
+			delay *= 2
+		}
 	}
 
-	logger.Debug("Transcription completed successfully")
-	return text, nil
+	logger.Error("Transcription failed after all retries", lastErr)
+	return "", fmt.Errorf("error transcribing audio: %w", lastErr)
 }
