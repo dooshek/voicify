@@ -511,30 +511,21 @@ func (s *Server) pauseAndCheckMediaPlaying() bool {
 		return false
 	}
 
-	cmd := exec.Command("pactl", "list", "sink-inputs")
-	output, err := cmd.Output()
+	// Use playerctl (MPRIS) to detect real media playback - no hardcoded ignore lists
+	statusCmd := exec.Command("playerctl", "status")
+	statusOut, err := statusCmd.Output()
 	if err != nil {
-		logger.Debugf("Failed to check media playing state: %v", err)
+		logger.Debugf("No MPRIS players found, nothing to pause")
 		return false
 	}
 
-	// Parse output to find if any stream is not corked (actively playing)
-	playing := false
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Corked: no") {
-			playing = true
-			break
-		}
-	}
-
-	if !playing {
-		logger.Debugf("No active media playback detected")
+	status := strings.TrimSpace(string(statusOut))
+	if status != "Playing" {
+		logger.Debugf("MPRIS player status: %s, nothing to pause", status)
 		return false
 	}
 
-	logger.Debugf("Active media playback detected, pausing via playerctl")
+	logger.Debugf("Active media playback detected (MPRIS: Playing), pausing via playerctl")
 	pauseCmd := exec.Command("playerctl", "pause")
 	if err := pauseCmd.Run(); err != nil {
 		logger.Debugf("playerctl pause failed, trying XF86AudioPause: %v", err)
@@ -558,8 +549,8 @@ func (s *Server) resumeMediaPlayback() {
 		return
 	}
 
-	// Delay to allow audio device to settle
-	time.Sleep(2 * time.Second)
+	// Delay to allow audio device to settle (extra time for BT profile switch back to A2DP stereo)
+	time.Sleep(2500 * time.Millisecond)
 
 	logger.Debugf("Resuming media playback via playerctl")
 	cmd := exec.Command("playerctl", "play")
