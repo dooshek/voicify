@@ -201,13 +201,35 @@ func (f *DefaultFileOps) CheckPID() error {
 	}
 
 	err = process.Signal(syscall.Signal(0))
-	if err == nil {
+	if err != nil {
+		// Process doesn't exist, stale PID file
+		logger.Debug("Found stale PID file, will be overwritten")
+		return nil
+	}
+
+	// Process exists - verify it's actually voicify by checking /proc/<pid>/exe
+	exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		// Can't read exe link - process may have exited between checks
+		logger.Debug("Found stale PID file (cannot verify process), will be overwritten")
+		return nil
+	}
+
+	selfPath, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		// Can't read own exe - fall back to assuming it's ours
 		return ErrProcessAlreadyRunning
 	}
 
-	// If we get here, the process doesn't exist but the PID file does
-	logger.Debug("Found stale PID file, will be overwritten")
-	return nil
+	if exePath != selfPath {
+		logger.Debugf("PID %d belongs to %s, not voicify - cleaning up stale PID file", pid, exePath)
+		if cleanErr := f.CleanupPID(); cleanErr != nil {
+			logger.Debugf("Failed to clean up stale PID file: %v", cleanErr)
+		}
+		return nil
+	}
+
+	return ErrProcessAlreadyRunning
 }
 
 func (f *DefaultFileOps) CleanupPID() error {
