@@ -20,13 +20,12 @@ type BluetoothDevice struct {
 // restoreCooldown is how long we keep the headset-head-unit profile active
 // after a recording ends, before reverting to the user's original (a2dp-sink).
 //
-// Why: rapid a2dp->hsp->a2dp->hsp flip-flop within seconds confuses bluez/SCO
-// state on some headsets (Sony WH-1000XM5 notably). The "ready" source name
-// resolves but the SCO link is half-dead, parecord reads EOF after one buffer
-// (320 bytes). Holding the profile for a few seconds lets back-to-back
-// recordings reuse the same SCO link, eliminating the race entirely. Music
-// quality stays degraded for the cooldown window, which is the trade we make.
-const restoreCooldown = 5 * time.Second
+// Rapid a2dp->hsp->a2dp->hsp flip-flop within seconds confuses bluez/SCO
+// state on some headsets (Sony WH-1000XM5 notably). Holding the profile
+// briefly lets a quick "press to start, press to stop, press again" reuse
+// the same SCO link. Music quality stays degraded for this window, so keep
+// it short - covers double-click cadence without making A2DP feel sluggish.
+const restoreCooldown = 2 * time.Second
 
 // HandsfreeManager handles switching Bluetooth profiles for recording
 type HandsfreeManager struct {
@@ -76,12 +75,14 @@ func (h *HandsfreeManager) SwitchToHandsfree() error {
 		h.restoreTimer.Stop()
 		h.restoreTimer = nil
 		if h.switched && h.btSource != "" {
-			logger.Debugf("Handsfree: reusing active headset profile (cooldown cancelled)")
+			logger.Infof("Handsfree: reusing active headset profile (cooldown cancelled, source=%s)", h.btSource)
 			// Make sure default source is still bluez_input - some app could have
 			// changed it during the cooldown. Cheap to re-set.
 			setDefaultSource(h.btSource)
 			return nil
 		}
+		logger.Infof("Handsfree: cooldown timer cancelled but state inconsistent (switched=%v btSource=%q) - falling through to fresh switch",
+			h.switched, h.btSource)
 	}
 
 	// Get current profile to restore later
@@ -100,13 +101,30 @@ func (h *HandsfreeManager) SwitchToHandsfree() error {
 	h.originalProfile = currentProfile
 	h.originalSource = getDefaultSource()
 
-	logger.Infof("Handsfree: switching %s from %s to headset-head-unit", h.deviceCardName, currentProfile)
+	logger.Infof("Handsfree: switching %s from %s to headset-head-unit (via off-cycle)", h.deviceCardName, currentProfile)
 
-	// Switch to handsfree (mSBC preferred over CVSD)
+	// Force-cycle through "off" before going to handsfree.
+	//
+	// On Sony WH-1000XM5 (and likely other power-saving headsets), going
+	// directly a2dp-sink -> headset-head-unit leaves the SCO link in a
+	// half-initialised state: bluez registers the bluez_input source name,
+	// pactl shows the profile as active, but parecord blocks indefinitely
+	// in its first read because no audio is actually flowing. Cycling
+	// through "off" forces bluez to tear down the BT audio session and
+	// re-negotiate, which reliably wakes the codec.
+	logger.Infof("Handsfree: cycling card off -> headset-head-unit")
+	if err := setCardProfile(h.deviceCardName, "off"); err != nil {
+		logger.Debugf("Handsfree: setting profile=off failed (continuing): %v", err)
+	}
+	time.Sleep(250 * time.Millisecond)
+
 	if err := setCardProfile(h.deviceCardName, "headset-head-unit"); err != nil {
 		logger.Debugf("Handsfree: mSBC failed, trying CVSD: %v", err)
 		if err := setCardProfile(h.deviceCardName, "headset-head-unit-cvsd"); err != nil {
 			logger.Debugf("Handsfree: CVSD also failed: %v", err)
+			// Best effort: try to put card back to original profile so we
+			// don't leave the user without audio output entirely.
+			_ = setCardProfile(h.deviceCardName, currentProfile)
 			return nil
 		}
 	}
@@ -168,6 +186,7 @@ func (h *HandsfreeManager) RestoreProfile() {
 func (h *HandsfreeManager) doRestore() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	logger.Infof("Handsfree: cooldown elapsed, executing restore")
 	h.restoreLocked()
 }
 

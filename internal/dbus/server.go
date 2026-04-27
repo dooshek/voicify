@@ -48,7 +48,15 @@ type Server struct {
 	// accumulated realtime transcription across complete chunks
 	realtimeAccum string
 	// media playback state tracking
-	wasMediaPlaying   bool
+	//
+	// pendingResume is true iff we paused MPRIS playback for a recording and
+	// have not yet issued the matching resume. It persists across rapid
+	// stop/start cycles: when the user starts recording 2 before recording 1's
+	// resume fires, we cancel the timer but keep pendingResume true, so the
+	// resume eventually happens after the LAST recording in the chain ends.
+	// resumeTimer is cancellable via Stop() to support that.
+	pendingResume     bool
+	resumeTimer       *time.Timer
 	autoPausePlayback bool
 	// stats tracking
 	statsManager       *stats.StatsManager
@@ -95,22 +103,22 @@ func NewServer() (*Server, error) {
 
 	hf := audio.NewHandsfreeManager()
 
-	// The extension pushes config (transcription model, language, handsfree
+	// The extension pushes config (transcription model, auto-pause, handsfree
 	// device, etc.) only at its own enable(); after a standalone daemon
 	// restart we have no values until the user toggles a setting. Read them
 	// directly from the extension's GSettings schema so the daemon survives
 	// a restart with full fidelity.
-	loadedModel, loadedRealtime, loadedLang := loadExtensionSettings(hf)
+	cfg := loadExtensionSettings(hf)
 	model := defaultModel
-	if loadedModel != "" {
-		model = loadedModel
+	if cfg.model != "" {
+		model = cfg.model
 	}
 	realtime := defaultModel
-	if loadedRealtime != "" {
-		realtime = loadedRealtime
+	if cfg.realtime != "" {
+		realtime = cfg.realtime
 	}
 	state.Get().Config.LLM.Transcription.Model = model
-	state.Get().Config.LLM.Transcription.Language = loadedLang
+	state.Get().Config.LLM.Transcription.Language = cfg.lang
 
 	return &Server{
 		recorder:              recorder,
@@ -118,24 +126,36 @@ func NewServer() (*Server, error) {
 		statsManager:          statsManager,
 		transcriptionModel:    model,
 		realtimeModel:         realtime,
-		transcriptionLanguage: loadedLang,
+		transcriptionLanguage: cfg.lang,
 		isRealtimeMode:        false,
 		handsfreeManager:      hf,
 		ctx:                   ctx,
 		cancel:                cancel,
 		disconnected:          make(chan struct{}),
+		autoPausePlayback:     cfg.autoPause,
 	}, nil
 }
 
-// loadExtensionSettings reads the daemon-relevant settings from the GNOME
-// extension's GSettings schema and applies handsfree config directly. Returns
-// transcription model, realtime model, and language strings (empty if unset
-// or schema unavailable) for the caller to wire into state.
-func loadExtensionSettings(hf *audio.HandsfreeManager) (model, realtime, lang string) {
+// extensionSettings holds the daemon-relevant subset of the GNOME extension's
+// GSettings schema, read at startup so the daemon survives a restart with
+// full fidelity (the extension only pushes config from its own enable()).
+type extensionSettings struct {
+	model     string
+	realtime  string
+	lang      string
+	autoPause bool
+}
+
+// loadExtensionSettings reads daemon-relevant settings from the GNOME
+// extension's GSettings schema. Applies handsfree config directly on hf
+// (it has its own setter); other settings are returned for the caller to
+// wire into the Server.
+func loadExtensionSettings(hf *audio.HandsfreeManager) extensionSettings {
+	var s extensionSettings
 	schemaDir := os.Getenv("HOME") + "/.local/share/gnome-shell/extensions/voicify@dooshek.com/schemas/"
 	if _, err := os.Stat(schemaDir); err != nil {
 		logger.Debugf("Extension schema dir not found, skipping gsettings preload")
-		return "", "", ""
+		return s
 	}
 
 	get := func(key string) string {
@@ -149,9 +169,10 @@ func loadExtensionSettings(hf *audio.HandsfreeManager) (model, realtime, lang st
 		return strings.Trim(strings.TrimSpace(string(out)), "'")
 	}
 
-	model = get("transcription-model")
-	realtime = get("realtime-model")
-	lang = get("transcription-language")
+	s.model = get("transcription-model")
+	s.realtime = get("realtime-model")
+	s.lang = get("transcription-language")
+	s.autoPause = get("auto-pause-playback") == "true"
 
 	if hfEnabled := get("handsfree-enabled") == "true"; hfEnabled {
 		if device := get("handsfree-device"); device != "" {
@@ -159,10 +180,11 @@ func loadExtensionSettings(hf *audio.HandsfreeManager) (model, realtime, lang st
 			logger.Infof("Loaded handsfree config from gsettings (device=%s)", device)
 		}
 	}
-	if model != "" {
-		logger.Infof("Loaded transcription model from gsettings: %s", model)
+	if s.model != "" {
+		logger.Infof("Loaded transcription model from gsettings: %s", s.model)
 	}
-	return model, realtime, lang
+	logger.Infof("Loaded auto-pause-playback from gsettings: %v", s.autoPause)
+	return s
 }
 
 // Start starts the D-Bus server
@@ -392,7 +414,8 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	logger.Debugf("D-Bus: TogglePostTranscriptionAutoPaste called")
+	logger.Infof("EVENT: shortcut TogglePostTranscriptionAutoPaste (Ctrl+Super+C) - currently recording=%v",
+		s.recorder.IsRecording() || s.realtimeRecorder.IsRecording())
 
 	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
 		// Already recording - stop it
@@ -400,7 +423,7 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 		go s.stopPostTranscriptionAutoPasteAsync()
 	} else {
 		// Check if media is currently playing before starting recording
-		s.wasMediaPlaying = s.pauseAndCheckMediaPlaying()
+		s.pauseMediaIfPlaying()
 
 		// Start recording in auto-paste mode
 		logger.Debugf("D-Bus: Starting post-transcription auto-paste recording")
@@ -425,7 +448,8 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	logger.Debugf("D-Bus: TogglePostTranscriptionRouter called")
+	logger.Infof("EVENT: shortcut TogglePostTranscriptionRouter (Ctrl+Super+D) - currently recording=%v",
+		s.recorder.IsRecording() || s.realtimeRecorder.IsRecording())
 
 	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
 		// Already recording - stop it
@@ -433,7 +457,7 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 		go s.stopPostTranscriptionRouterAsync()
 	} else {
 		// Check if media is currently playing before starting recording
-		s.wasMediaPlaying = s.pauseAndCheckMediaPlaying()
+		s.pauseMediaIfPlaying()
 
 		// Start recording in router mode
 		logger.Debugf("D-Bus: Starting post-transcription router recording")
@@ -458,14 +482,15 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	logger.Debugf("D-Bus: StartRealtimeRecording called")
+	logger.Infof("EVENT: shortcut StartRealtimeRecording (Ctrl+Super+V) - currently realtime=%v",
+		s.realtimeRecorder.IsRecording())
 
 	if s.recorder.IsRecording() || s.realtimeRecorder.IsRecording() {
 		return dbus.MakeFailedError(fmt.Errorf("recording already in progress"))
 	}
 
 	// Check if media is currently playing before starting recording
-	s.wasMediaPlaying = s.pauseAndCheckMediaPlaying()
+	s.pauseMediaIfPlaying()
 
 	s.isRealtimeMode = true
 	// reset accumulator for this session
@@ -508,7 +533,7 @@ func (s *Server) CancelRecording() *dbus.Error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	logger.Debugf("D-Bus: CancelRecording called")
+	logger.Infof("EVENT: shortcut CancelRecording")
 
 	if s.isRealtimeMode {
 		if !s.realtimeRecorder.IsRecording() {
@@ -522,7 +547,7 @@ func (s *Server) CancelRecording() *dbus.Error {
 		s.stopForwardingRealtimeLevels()
 
 		go s.handsfreeManager.RestoreProfile()
-		go s.resumeMediaPlayback()
+		s.scheduleMediaResumeLocked()
 
 		// After cancelling realtime, route the accumulated transcription if present
 		finalText := s.realtimeAccum
@@ -556,7 +581,7 @@ func (s *Server) CancelRecording() *dbus.Error {
 		s.stopForwardingLevels()
 
 		go s.handsfreeManager.RestoreProfile()
-		go s.resumeMediaPlayback()
+		s.scheduleMediaResumeLocked()
 	}
 
 	// Emit signal
@@ -632,63 +657,117 @@ func (s *Server) SetHandsfreeConfig(enabled bool, device string) *dbus.Error {
 	return nil
 }
 
-// pauseAndCheckMediaPlaying pauses media if playing and returns whether it was playing.
+// pauseMediaIfPlaying pauses MPRIS playback when starting a recording.
+//
+// State machine: pendingResume tracks whether we owe a "resume" to the user.
+// If a previous recording in a rapid stop-start chain already paused media
+// and is still waiting in cooldown, we cancel that timer and inherit
+// pendingResume - the resume will happen after the LAST recording ends, not
+// after each one. This avoids the bug where MPRIS reports Paused on the
+// second start (because we paused it ourselves), pauseAndCheck returns false,
+// and the eventual resume never fires.
+//
 // Must be called with s.mu held.
-func (s *Server) pauseAndCheckMediaPlaying() bool {
+func (s *Server) pauseMediaIfPlaying() {
 	if !s.autoPausePlayback {
-		return false
+		logger.Infof("media: autoPausePlayback disabled, skipping pause/resume cycle")
+		return
 	}
 
-	// Use playerctl (MPRIS) to detect real media playback - no hardcoded ignore lists
+	// Cancel any pending resume from a previous recording. We're starting
+	// another one, so the resume that was scheduled for the previous stop
+	// should not fire mid-this-recording.
+	if s.resumeTimer != nil {
+		s.resumeTimer.Stop()
+		s.resumeTimer = nil
+		logger.Infof("media: pending resume cancelled (new recording starting, pendingResume=%v carries over)",
+			s.pendingResume)
+		// If pendingResume was already set, keep it - we still owe a resume,
+		// and media is already paused. No need to re-issue the pause.
+		if s.pendingResume {
+			return
+		}
+	}
+
 	statusCmd := exec.Command("playerctl", "status")
 	statusOut, err := statusCmd.Output()
 	if err != nil {
-		logger.Debugf("No MPRIS players found, nothing to pause")
-		return false
+		logger.Infof("media: no MPRIS players, nothing to pause")
+		return
 	}
 
 	status := strings.TrimSpace(string(statusOut))
 	if status != "Playing" {
-		logger.Debugf("MPRIS player status: %s, nothing to pause", status)
-		return false
-	}
-
-	logger.Debugf("Active media playback detected (MPRIS: Playing), pausing via playerctl")
-	pauseCmd := exec.Command("playerctl", "pause")
-	if err := pauseCmd.Run(); err != nil {
-		logger.Debugf("playerctl pause failed, trying XF86AudioPause: %v", err)
-		xdoCmd := exec.Command("xdotool", "key", "XF86AudioPause")
-		if err2 := xdoCmd.Run(); err2 != nil {
-			logger.Debugf("XF86AudioPause also failed: %v", err2)
-		}
-	}
-	return true
-}
-
-// resumeMediaPlayback attempts to resume media playback after recording stops.
-// Reads and resets wasMediaPlaying atomically under lock.
-func (s *Server) resumeMediaPlayback() {
-	s.mu.Lock()
-	was := s.wasMediaPlaying
-	s.wasMediaPlaying = false
-	s.mu.Unlock()
-
-	if !was {
+		logger.Infof("media: MPRIS status=%s, nothing to pause", status)
 		return
 	}
 
-	// Delay to allow audio device to settle (extra time for BT profile switch back to A2DP stereo)
-	time.Sleep(2500 * time.Millisecond)
-
-	logger.Debugf("Resuming media playback via playerctl")
-	cmd := exec.Command("playerctl", "play")
-	if err := cmd.Run(); err != nil {
-		logger.Debugf("playerctl play failed, trying XF86AudioPlay: %v", err)
-		xdoCmd := exec.Command("xdotool", "key", "XF86AudioPlay")
+	logger.Infof("media: pausing (MPRIS Playing detected)")
+	pauseCmd := exec.Command("playerctl", "pause")
+	if err := pauseCmd.Run(); err != nil {
+		logger.Warnf("media: playerctl pause failed (%v), falling back to XF86AudioPause", err)
+		xdoCmd := exec.Command("xdotool", "key", "XF86AudioPause")
 		if err2 := xdoCmd.Run(); err2 != nil {
-			logger.Debugf("XF86AudioPlay also failed: %v", err2)
+			logger.Errorf("media: XF86AudioPause also failed", err2)
 		}
 	}
+	s.pendingResume = true
+}
+
+// scheduleMediaResume arms a cancellable timer to resume MPRIS playback if
+// pendingResume is set. Replaces the old goroutine-with-sleep model so a
+// fresh recording can cancel the in-flight resume cleanly.
+//
+// Takes s.mu - DO NOT call from a context that already holds the lock
+// (e.g. inside a D-Bus method). Use scheduleMediaResumeLocked() there.
+func (s *Server) scheduleMediaResume() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scheduleMediaResumeLocked()
+}
+
+// scheduleMediaResumeLocked is the lock-free variant for callers that
+// already hold s.mu (e.g. CancelRecording). go's sync.Mutex is not
+// reentrant, so calling scheduleMediaResume() under the lock would
+// deadlock the daemon - and silently break the entire D-Bus surface,
+// since every other method also takes s.mu.
+func (s *Server) scheduleMediaResumeLocked() {
+	if !s.pendingResume {
+		return
+	}
+	if s.resumeTimer != nil {
+		s.resumeTimer.Stop()
+	}
+	logger.Infof("media: resume scheduled in 2.5s")
+	s.resumeTimer = time.AfterFunc(2500*time.Millisecond, s.fireMediaResume)
+}
+
+// fireMediaResume is the timer callback for scheduleMediaResume.
+func (s *Server) fireMediaResume() {
+	s.mu.Lock()
+	s.resumeTimer = nil
+	recording := s.recorder.IsRecording() || s.realtimeRecorder.IsRecording()
+	s.mu.Unlock()
+
+	if recording {
+		// Don't resume mid-recording - the eventual stop will reschedule us.
+		logger.Infof("media: resume timer fired but recording in progress, holding (will reschedule on stop)")
+		return
+	}
+
+	logger.Infof("media: resuming via playerctl play")
+	cmd := exec.Command("playerctl", "play")
+	if err := cmd.Run(); err != nil {
+		logger.Warnf("media: playerctl play failed (%v), falling back to XF86AudioPlay", err)
+		xdoCmd := exec.Command("xdotool", "key", "XF86AudioPlay")
+		if err2 := xdoCmd.Run(); err2 != nil {
+			logger.Errorf("media: XF86AudioPlay also failed", err2)
+		}
+	}
+
+	s.mu.Lock()
+	s.pendingResume = false
+	s.mu.Unlock()
 }
 
 // stopPostTranscriptionAutoPasteAsync stops recording in auto-paste mode
@@ -702,7 +781,7 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())
 			s.postTranscriptionAutoPaste = false
-			s.resumeMediaPlayback()
+			s.scheduleMediaResume()
 			return
 		}
 
@@ -710,7 +789,7 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 		s.stopForwardingLevels()
 
 		// Resume media playback after recording stops
-		go s.resumeMediaPlayback()
+		s.scheduleMediaResume()
 
 		logger.Debugf("D-Bus: Post-transcription auto-paste received: %s", transcription)
 
@@ -747,7 +826,7 @@ func (s *Server) stopPostTranscriptionRouterAsync() {
 			logger.Errorf("D-Bus: Error stopping recording", err)
 			s.emitSignal("RecordingError", err.Error())
 			s.postTranscriptionRouterMode = false
-			s.resumeMediaPlayback()
+			s.scheduleMediaResume()
 			return
 		}
 
@@ -755,7 +834,7 @@ func (s *Server) stopPostTranscriptionRouterAsync() {
 		s.stopForwardingLevels()
 
 		// Resume media playback after recording stops
-		go s.resumeMediaPlayback()
+		s.scheduleMediaResume()
 
 		logger.Debugf("D-Bus: Post-transcription router received: %s", transcription)
 

@@ -287,14 +287,85 @@ func (r *Recorder) recordWithParec() {
 	// Small buffer for responsive level updates (320 bytes = 10ms at 16kHz mono s16le)
 	buf := make([]byte, 320)
 
+	// Diagnostic state for the recording loop. These exist so we can tell
+	// the difference, after the fact, between:
+	//   * parecord never streamed (BT SCO dead from the start)
+	//   * parecord streamed silence (BT SCO half-dead)
+	//   * parecord streamed normally then went silent (something stole the
+	//     source mid-recording: profile flip, default-source change)
+	//   * parecord stopped streaming entirely mid-recording (EOF)
+	startTime := time.Now()
+	lastLogTime := startTime
+	var bytesSinceLog int64
+	var samplesSinceLog int64
+	var sumAbsSinceLog int64
+	totalBytes := int64(0)
+	silenceWindowStart := time.Time{} // when current run of silence began
+	silenceLogged := false
+
 	for r.isRecording {
 		n, err := stdout.Read(buf)
 		if err != nil {
+			logger.Errorf("parecord read error after %d bytes (%v elapsed)", err,
+				totalBytes, time.Since(startTime))
 			break
 		}
 		if n > 0 {
 			audioBuffer.Write(buf[:n])
 			r.level.Process(buf[:n])
+
+			totalBytes += int64(n)
+			bytesSinceLog += int64(n)
+
+			// Sum abs s16le samples for amplitude logging
+			for i := 0; i+1 < n; i += 2 {
+				v := int16(buf[i]) | int16(buf[i+1])<<8
+				if v < 0 {
+					v = -v
+				}
+				sumAbsSinceLog += int64(v)
+				samplesSinceLog++
+
+				// Track contiguous silence windows. avg < ~30 ≈ near-zero.
+				// This is checked per-buffer-end below to avoid extra work.
+			}
+
+			// Per-second progress log. Reports byte rate (should be ~32000 B/s
+			// at 16kHz s16le mono) and average amplitude (silence ≈ 1, speech
+			// well into the hundreds/thousands).
+			now := time.Now()
+			if now.Sub(lastLogTime) >= time.Second {
+				avg := int64(0)
+				if samplesSinceLog > 0 {
+					avg = sumAbsSinceLog / samplesSinceLog
+				}
+				logger.Infof("parecord: t=%.1fs total=%dB last1s=%dB avgAmp=%d",
+					now.Sub(startTime).Seconds(), totalBytes, bytesSinceLog, avg)
+
+				// If the last second was effectively silent, mark it so we
+				// know whether the cap was already silent at end-of-recording.
+				if avg <= 4 {
+					if silenceWindowStart.IsZero() {
+						silenceWindowStart = lastLogTime
+					}
+					if !silenceLogged && now.Sub(silenceWindowStart) >= 2*time.Second {
+						logger.Errorf("parecord: silence >=2s detected (avgAmp=%d) - SCO link likely dead",
+							fmt.Errorf("source=%s", source), avg)
+						silenceLogged = true
+					}
+				} else {
+					if silenceLogged {
+						logger.Infof("parecord: signal recovered after silence")
+					}
+					silenceWindowStart = time.Time{}
+					silenceLogged = false
+				}
+
+				lastLogTime = now
+				bytesSinceLog = 0
+				samplesSinceLog = 0
+				sumAbsSinceLog = 0
+			}
 		}
 	}
 
