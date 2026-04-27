@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/dooshek/voicify/internal/config"
@@ -207,18 +208,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Check if another instance is running
-	if err := fileOps.CheckPID(); err != nil {
-		if errors.Is(err, fileops.ErrProcessAlreadyRunning) {
-			logger.Error("Another instance of Voicify is already running", err)
+	// Single-instance lock.
+	//
+	// Daemon mode: we rely on D-Bus name ownership as the lock - if another
+	// daemon is alive it already owns "com.dooshek.voicify", and our later
+	// RequestName() call will fail. A PID file here would deadlock recovery:
+	// if the previous daemon dies without cleanup (or just loses its bus
+	// connection), the file lingers and blocks every restart, even though
+	// the bus name is free.
+	//
+	// Keyboard mode has no D-Bus, so the PID file is the only lock available.
+	if !*daemonMode {
+		if err := fileOps.CheckPID(); err != nil {
+			if errors.Is(err, fileops.ErrProcessAlreadyRunning) {
+				logger.Error("Another instance of Voicify is already running", err)
+				os.Exit(1)
+			}
+		}
+		if err := fileOps.SavePID(); err != nil {
+			logger.Error("Failed to save PID file", err)
 			os.Exit(1)
 		}
-	}
-
-	// Save current PID
-	if err := fileOps.SavePID(); err != nil {
-		logger.Error("Failed to save PID file", err)
-		os.Exit(1)
 	}
 
 	// Print to console
@@ -243,47 +253,58 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle cleanup in a separate goroutine
+	// shutdown performs cleanup and exits with the given code.
+	// Code 0 = clean shutdown (signal). Non-zero = unexpected condition;
+	// systemd Restart=on-failure picks the daemon back up.
+	var shutdownOnce sync.Once
+	shutdown := func(code int) {
+		shutdownOnce.Do(func() {
+			cancel()
+
+			if *daemonMode && dbusServer != nil {
+				dbusServer.Stop()
+			}
+
+			if mcpClient := state.Get().GetLinearMCPClient(); mcpClient != nil {
+				if client, ok := mcpClient.(*linear.LinearMCPClient); ok {
+					client.Close()
+				}
+			}
+
+			if !*daemonMode {
+				if err := fileOps.CleanupPID(); err != nil {
+					logger.Error("Failed to cleanup PID file", err)
+				}
+			}
+			os.Exit(code)
+		})
+	}
+
 	go func() {
 		sig := <-sigChan
 		logger.Infof("Received signal %v, shutting down...", sig)
-		cancel() // Cancel context
-
-		// Clean up based on mode
-		if *daemonMode && dbusServer != nil {
-			dbusServer.Stop()
-		}
-
-		// Cleanup Linear MCP client
-		if mcpClient := state.Get().GetLinearMCPClient(); mcpClient != nil {
-			if client, ok := mcpClient.(*linear.LinearMCPClient); ok {
-				client.Close()
-			}
-		}
-
-		if err := fileOps.CleanupPID(); err != nil {
-			logger.Error("Failed to cleanup PID file", err)
-		}
-		os.Exit(0)
+		shutdown(0)
 	}()
 
 	// Start service based on mode
 	if *daemonMode {
-		// Start D-Bus server
 		if err := dbusServer.Start(); err != nil {
 			logger.Error("Failed to start D-Bus server", err)
 			os.Exit(1)
 		}
-		// Wait for server to be stopped
+		// If the bus connection drops or we lose our service name, exit
+		// non-zero so the supervisor (systemd) restarts a fresh instance.
+		go func() {
+			<-dbusServer.Disconnected()
+			shutdown(1)
+		}()
 		dbusServer.Wait()
 	} else {
-		// Start keyboard monitoring in a goroutine
 		go func() {
 			if err := monitor.Start(ctx); err != nil {
 				logger.Error("Keyboard monitor failed", err)
 			}
 		}()
-		// Block and wait for shutdown signal
 		<-ctx.Done()
 	}
 

@@ -117,10 +117,7 @@ const VoicifyDBusInterface = `
 
 const VoicifyProxy = Gio.DBusProxy.makeProxyWrapper(VoicifyDBusInterface);
 
-// D-Bus service configuration for on-demand daemon activation
 const DBUS_SERVICE_NAME = 'com.dooshek.voicify';
-const VOICIFY_BINARY_PATH = GLib.get_home_dir() + '/bin/voicify';
-const VOICIFY_LOG_PATH = GLib.get_home_dir() + '/.config/voicify/voicify.log';
 
 export default class VoicifyExtension extends Extension {
     enable() {
@@ -284,7 +281,7 @@ export default class VoicifyExtension extends Extension {
             })
         );
 
-        this._ensureDBusServiceFile();
+        this._ensureDaemonRunning();
 
         try {
             const seat = Clutter.get_default_backend().get_default_seat();
@@ -2147,51 +2144,59 @@ export default class VoicifyExtension extends Extension {
         }
     }
 
-    // --- D-Bus service file ---
+    // --- Daemon lifecycle ---
+    //
+    // Daemon is managed by systemd user service (voicify.service), installed
+    // by install.sh. We ask systemd to start it via D-Bus rather than spawning
+    // the binary ourselves, so a single supervised process is the source of
+    // truth - no PID-file zombies, no path hardcoding in the extension.
+    //
+    // If the unit isn't installed (user copied the extension but didn't run
+    // install.sh), we log and bail; user-facing notification happens lazily
+    // when the proxy fails to reach com.dooshek.voicify.
 
-    _ensureDBusServiceFile() {
-        const serviceDir = GLib.get_home_dir() + '/.local/share/dbus-1/services';
-        const serviceFile = serviceDir + '/' + DBUS_SERVICE_NAME + '.service';
-
-        const file = Gio.File.new_for_path(serviceFile);
-        if (file.query_exists(null)) return;
-
-        const binaryFile = Gio.File.new_for_path(VOICIFY_BINARY_PATH);
-        if (!binaryFile.query_exists(null)) {
-            console.error('Voicify binary not found at:', VOICIFY_BINARY_PATH);
-            return;
-        }
-
-        const dir = Gio.File.new_for_path(serviceDir);
-        if (!dir.query_exists(null)) {
-            try {
-                dir.make_directory_with_parents(null);
-            } catch (e) {
-                console.error('Failed to create D-Bus services directory:', e.message);
-                return;
-            }
-        }
-
-        const serviceContent = `[D-BUS Service]
-Name=${DBUS_SERVICE_NAME}
-Exec=${VOICIFY_BINARY_PATH} --daemon --log-level=debug --log-filename=${VOICIFY_LOG_PATH}
-`;
-
+    _ensureDaemonRunning() {
+        // Drop legacy D-Bus activation file if present - it points to a hardcoded
+        // binary path and races with the systemd-managed daemon.
         try {
-            const outputStream = file.replace(null, false, Gio.FileCreateFlags.NONE, null);
-            const bytes = new TextEncoder().encode(serviceContent);
-            outputStream.write_all(bytes, null);
-            outputStream.close(null);
+            const legacy = Gio.File.new_for_path(
+                GLib.get_home_dir() + '/.local/share/dbus-1/services/' + DBUS_SERVICE_NAME + '.service'
+            );
+            if (legacy.query_exists(null)) {
+                legacy.delete(null);
+                console.debug('Voicify: removed legacy D-Bus activation file');
+            }
+        } catch (e) {
+            console.debug(`Voicify: failed to remove legacy activation file: ${e.message}`);
+        }
 
-            Gio.DBus.session.call_sync(
-                'org.freedesktop.DBus',
-                '/org/freedesktop/DBus',
-                'org.freedesktop.DBus',
-                'ReloadConfig',
-                null, null, Gio.DBusCallFlags.NONE, -1, null
+        // Ask systemd --user to start voicify.service. StartUnit is idempotent:
+        // if already active it returns immediately. Mode "replace" = standard.
+        try {
+            Gio.DBus.session.call(
+                'org.freedesktop.systemd1',
+                '/org/freedesktop/systemd1',
+                'org.freedesktop.systemd1.Manager',
+                'StartUnit',
+                new GLib.Variant('(ss)', ['voicify.service', 'replace']),
+                null,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (source, result) => {
+                    try {
+                        source.call_finish(result);
+                    } catch (e) {
+                        // Most likely the unit isn't installed - point the user at install.sh.
+                        console.error(
+                            `Voicify: could not start voicify.service via systemd (${e.message}). ` +
+                            `Run install.sh from the repo to set it up.`
+                        );
+                    }
+                }
             );
         } catch (e) {
-            console.error('Failed to create D-Bus service file:', e.message);
+            console.error('Voicify: systemd StartUnit call failed:', e.message);
         }
     }
 

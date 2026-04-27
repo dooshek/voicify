@@ -1,0 +1,13 @@
+[Unit]
+Description=Voicify voice-to-text daemon
+After=graphical-session.target dbus.socket
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/voicify --daemon --log-level=info --log-filename=%h/.config/voicify/voicify.log
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

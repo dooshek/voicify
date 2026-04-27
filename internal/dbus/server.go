@@ -35,7 +35,11 @@ type Server struct {
 	postTranscriptionAutoPaste  bool // Post-transcription mode with auto-paste
 	ctx                         context.Context
 	cancel                      context.CancelFunc
-	mu                          sync.Mutex
+	// disconnected is closed when the bus connection drops or the service name is lost.
+	// Allows main to distinguish unexpected disconnects (exit non-zero, systemd restarts)
+	// from user-requested shutdown via Stop().
+	disconnected chan struct{}
+	mu           sync.Mutex
 	// level forwarding
 	levelForwardCancel context.CancelFunc
 	// realtime transcription forwarding
@@ -99,6 +103,7 @@ func NewServer() (*Server, error) {
 		handsfreeManager:      audio.NewHandsfreeManager(),
 		ctx:                   ctx,
 		cancel:                cancel,
+		disconnected:          make(chan struct{}),
 	}, nil
 }
 
@@ -242,7 +247,67 @@ func (s *Server) Start() error {
 	logger.Infof("🔌 D-Bus service started: %s", dbusServiceName)
 	logger.Infof("💡 Extension can now communicate with voicify daemon")
 
+	// Watch for connection drop or service-name loss. Either means we're no longer
+	// reachable; signal main so the process exits and systemd restarts us.
+	go s.watchConnection()
+
 	return nil
+}
+
+// watchConnection signals s.disconnected if the bus connection closes or our
+// service name is taken away. godbus does not auto-reconnect, so a connection
+// drop (e.g. session bus restart on suspend/resume) leaves the process alive
+// but unreachable - we must exit so the supervisor can restart a fresh instance.
+func (s *Server) watchConnection() {
+	// NameLost subscription
+	nameLostCh := make(chan *dbus.Signal, 4)
+	s.conn.Signal(nameLostCh)
+	if err := s.conn.AddMatchSignal(
+		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchMember("NameLost"),
+	); err != nil {
+		logger.Errorf("Failed to subscribe to NameLost", err)
+	}
+
+	connDone := s.conn.Context().Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-connDone:
+			logger.Error("D-Bus connection closed unexpectedly", fmt.Errorf("session bus disconnected"))
+			s.signalDisconnected()
+			return
+		case sig := <-nameLostCh:
+			if sig == nil {
+				continue
+			}
+			if len(sig.Body) > 0 {
+				if name, ok := sig.Body[0].(string); ok && name == dbusServiceName {
+					logger.Error("Lost ownership of D-Bus name", fmt.Errorf("name=%s", dbusServiceName))
+					s.signalDisconnected()
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *Server) signalDisconnected() {
+	select {
+	case <-s.disconnected:
+		// already closed
+	default:
+		close(s.disconnected)
+	}
+}
+
+// Disconnected returns a channel that is closed when the daemon loses its
+// D-Bus presence (connection drop or NameLost). Main should treat this as
+// a fatal condition and exit non-zero so systemd restarts the daemon.
+func (s *Server) Disconnected() <-chan struct{} {
+	return s.disconnected
 }
 
 // Stop stops the D-Bus server
