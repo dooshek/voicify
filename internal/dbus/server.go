@@ -3,6 +3,7 @@ package dbus
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -92,19 +93,76 @@ func NewServer() (*Server, error) {
 	state.Get().Config.LLM.Transcription.Language = "" // auto-detect
 	state.Get().Config.LLM.Transcription.Provider = "openai"
 
+	hf := audio.NewHandsfreeManager()
+
+	// The extension pushes config (transcription model, language, handsfree
+	// device, etc.) only at its own enable(); after a standalone daemon
+	// restart we have no values until the user toggles a setting. Read them
+	// directly from the extension's GSettings schema so the daemon survives
+	// a restart with full fidelity.
+	loadedModel, loadedRealtime, loadedLang := loadExtensionSettings(hf)
+	model := defaultModel
+	if loadedModel != "" {
+		model = loadedModel
+	}
+	realtime := defaultModel
+	if loadedRealtime != "" {
+		realtime = loadedRealtime
+	}
+	state.Get().Config.LLM.Transcription.Model = model
+	state.Get().Config.LLM.Transcription.Language = loadedLang
+
 	return &Server{
 		recorder:              recorder,
 		realtimeRecorder:      realtimeRecorder,
 		statsManager:          statsManager,
-		transcriptionModel:    defaultModel,
-		realtimeModel:         defaultModel,
-		transcriptionLanguage: "",
+		transcriptionModel:    model,
+		realtimeModel:         realtime,
+		transcriptionLanguage: loadedLang,
 		isRealtimeMode:        false,
-		handsfreeManager:      audio.NewHandsfreeManager(),
+		handsfreeManager:      hf,
 		ctx:                   ctx,
 		cancel:                cancel,
 		disconnected:          make(chan struct{}),
 	}, nil
+}
+
+// loadExtensionSettings reads the daemon-relevant settings from the GNOME
+// extension's GSettings schema and applies handsfree config directly. Returns
+// transcription model, realtime model, and language strings (empty if unset
+// or schema unavailable) for the caller to wire into state.
+func loadExtensionSettings(hf *audio.HandsfreeManager) (model, realtime, lang string) {
+	schemaDir := os.Getenv("HOME") + "/.local/share/gnome-shell/extensions/voicify@dooshek.com/schemas/"
+	if _, err := os.Stat(schemaDir); err != nil {
+		logger.Debugf("Extension schema dir not found, skipping gsettings preload")
+		return "", "", ""
+	}
+
+	get := func(key string) string {
+		cmd := exec.Command("gsettings", "get", "org.gnome.shell.extensions.voicify", key)
+		cmd.Env = append(os.Environ(), "GSETTINGS_SCHEMA_DIR="+schemaDir)
+		out, err := cmd.Output()
+		if err != nil {
+			return ""
+		}
+		// gsettings string values are quoted: 'value'. Booleans are bare: true/false.
+		return strings.Trim(strings.TrimSpace(string(out)), "'")
+	}
+
+	model = get("transcription-model")
+	realtime = get("realtime-model")
+	lang = get("transcription-language")
+
+	if hfEnabled := get("handsfree-enabled") == "true"; hfEnabled {
+		if device := get("handsfree-device"); device != "" {
+			hf.SetConfig(true, device)
+			logger.Infof("Loaded handsfree config from gsettings (device=%s)", device)
+		}
+	}
+	if model != "" {
+		logger.Infof("Loaded transcription model from gsettings: %s", model)
+	}
+	return model, realtime, lang
 }
 
 // Start starts the D-Bus server
@@ -312,6 +370,11 @@ func (s *Server) Disconnected() <-chan struct{} {
 
 // Stop stops the D-Bus server
 func (s *Server) Stop() {
+	// Force-restore the BT profile synchronously - we're exiting, can't leave
+	// a pending cooldown timer behind.
+	if s.handsfreeManager != nil {
+		s.handsfreeManager.ShutdownNow()
+	}
 	s.cancel()
 	if s.conn != nil {
 		s.conn.Close()

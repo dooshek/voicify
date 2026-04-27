@@ -17,6 +17,17 @@ type BluetoothDevice struct {
 	Address     string `json:"address"`
 }
 
+// restoreCooldown is how long we keep the headset-head-unit profile active
+// after a recording ends, before reverting to the user's original (a2dp-sink).
+//
+// Why: rapid a2dp->hsp->a2dp->hsp flip-flop within seconds confuses bluez/SCO
+// state on some headsets (Sony WH-1000XM5 notably). The "ready" source name
+// resolves but the SCO link is half-dead, parecord reads EOF after one buffer
+// (320 bytes). Holding the profile for a few seconds lets back-to-back
+// recordings reuse the same SCO link, eliminating the race entirely. Music
+// quality stays degraded for the cooldown window, which is the trade we make.
+const restoreCooldown = 5 * time.Second
+
 // HandsfreeManager handles switching Bluetooth profiles for recording
 type HandsfreeManager struct {
 	mu              sync.Mutex
@@ -26,6 +37,9 @@ type HandsfreeManager struct {
 	originalSource  string
 	btSource        string
 	switched        bool
+	// restoreTimer fires `restoreCooldown` after the last recording ends.
+	// SwitchToHandsfree stops it if the user records again within the window.
+	restoreTimer *time.Timer
 }
 
 // NewHandsfreeManager creates a new HandsfreeManager
@@ -44,13 +58,30 @@ func (h *HandsfreeManager) SetConfig(enabled bool, device string) {
 
 // SwitchToHandsfree switches the configured BT card to headset-head-unit profile.
 // Returns nil if handsfree is disabled or device not configured.
-// Blocks until PipeWire settles (~1.5s).
+//
+// If a previous recording's restore is still pending in the cooldown window,
+// this cancels it and reuses the existing SCO link - no profile change, no
+// race with bluez. Otherwise the profile is switched and we block until the
+// BT input source is registered AND the SCO link has had time to settle.
 func (h *HandsfreeManager) SwitchToHandsfree() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if !h.enabled || h.deviceCardName == "" {
 		return nil
+	}
+
+	// Pending restore from a recent recording - cancel it, we're recording again.
+	if h.restoreTimer != nil {
+		h.restoreTimer.Stop()
+		h.restoreTimer = nil
+		if h.switched && h.btSource != "" {
+			logger.Debugf("Handsfree: reusing active headset profile (cooldown cancelled)")
+			// Make sure default source is still bluez_input - some app could have
+			// changed it during the cooldown. Cheap to re-set.
+			setDefaultSource(h.btSource)
+			return nil
+		}
 	}
 
 	// Get current profile to restore later
@@ -60,7 +91,7 @@ func (h *HandsfreeManager) SwitchToHandsfree() error {
 		return nil
 	}
 
-	// Already in handsfree mode
+	// Already in handsfree mode (e.g., user set it manually)
 	if strings.HasPrefix(currentProfile, "headset-head-unit") {
 		logger.Debugf("Handsfree: already in headset profile (%s)", currentProfile)
 		return nil
@@ -82,21 +113,24 @@ func (h *HandsfreeManager) SwitchToHandsfree() error {
 
 	h.switched = true
 
-	// Wait for PipeWire to create the BT source
-	time.Sleep(300 * time.Millisecond)
+	// Wait for the BT input source to register, polling every 100ms.
+	btSource := waitForBTSource(h.deviceCardName, 2*time.Second)
+	if btSource == "" {
+		logger.Debugf("Handsfree: could not find BT input source within timeout")
+	} else {
+		// Source name is registered, but the SCO audio link may still be
+		// settling. Without this grace period, parecord launches against a
+		// "ready" source name but reads EOF after a single buffer (320 bytes).
+		time.Sleep(600 * time.Millisecond)
 
-	// Find BT input source and set it as default + max volume
-	btSource := findBluetoothSource(h.deviceCardName)
-	if btSource != "" {
 		h.btSource = btSource
 		logger.Infof("Handsfree: setting default source to %s", btSource)
 		setDefaultSource(btSource)
 		setSourceVolume(btSource, "100%")
-	} else {
-		logger.Debugf("Handsfree: could not find BT input source")
 	}
 
-	logger.Infof("Handsfree: ready, will restore %s after recording", h.originalProfile)
+	logger.Infof("Handsfree: ready, will restore %s after recording (with %v cooldown)",
+		h.originalProfile, restoreCooldown)
 	return nil
 }
 
@@ -110,7 +144,9 @@ func (h *HandsfreeManager) GetBTSource() string {
 	return ""
 }
 
-// RestoreProfile switches back to the original profile after recording
+// RestoreProfile schedules a profile restore after restoreCooldown. If the
+// user records again within the window, SwitchToHandsfree cancels the timer
+// and reuses the existing SCO link.
 func (h *HandsfreeManager) RestoreProfile() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -119,13 +155,33 @@ func (h *HandsfreeManager) RestoreProfile() {
 		return
 	}
 
-	// Restore default source first
+	// Replace any existing timer (e.g. if RestoreProfile is called twice)
+	if h.restoreTimer != nil {
+		h.restoreTimer.Stop()
+	}
+	logger.Infof("Handsfree: scheduling profile restore in %v", restoreCooldown)
+	h.restoreTimer = time.AfterFunc(restoreCooldown, h.doRestore)
+}
+
+// doRestore performs the actual profile/source restore. Called by the
+// cooldown timer or synchronously by ShutdownNow.
+func (h *HandsfreeManager) doRestore() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.restoreLocked()
+}
+
+// restoreLocked performs the actual restore. Caller must hold h.mu.
+func (h *HandsfreeManager) restoreLocked() {
+	if !h.switched {
+		return
+	}
+
 	if h.originalSource != "" {
 		logger.Infof("Handsfree: restoring default source to %s", h.originalSource)
 		setDefaultSource(h.originalSource)
 	}
 
-	// Restore card profile
 	if h.originalProfile != "" {
 		logger.Infof("Handsfree: restoring profile to %s", h.originalProfile)
 		if err := setCardProfile(h.deviceCardName, h.originalProfile); err != nil {
@@ -137,6 +193,20 @@ func (h *HandsfreeManager) RestoreProfile() {
 	h.originalProfile = ""
 	h.originalSource = ""
 	h.btSource = ""
+	h.restoreTimer = nil
+}
+
+// ShutdownNow restores the profile immediately, bypassing the cooldown.
+// Call this from the daemon's shutdown path so we don't leave the headset
+// stuck in handsfree mode after the process exits.
+func (h *HandsfreeManager) ShutdownNow() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.restoreTimer != nil {
+		h.restoreTimer.Stop()
+		h.restoreTimer = nil
+	}
+	h.restoreLocked()
 }
 
 // --- pactl helpers ---
@@ -187,6 +257,21 @@ func setDefaultSource(source string) {
 func setSourceVolume(source, volume string) {
 	if out, err := exec.Command("pactl", "set-source-volume", source, volume).CombinedOutput(); err != nil {
 		logger.Debugf("Handsfree: set-source-volume failed: %s: %v", string(out), err)
+	}
+}
+
+// waitForBTSource polls until the BT input source for cardName appears,
+// returning its name. Returns "" if the timeout expires first.
+func waitForBTSource(cardName string, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for {
+		if src := findBluetoothSource(cardName); src != "" {
+			return src
+		}
+		if !time.Now().Before(deadline) {
+			return ""
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
