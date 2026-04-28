@@ -193,6 +193,14 @@ func (rr *RealtimeRecorder) recordAndStream() {
 	// Buffer to accumulate audio before sending
 	audioBuffer := make([]byte, 0, audioChunkBytes*2) // Double size for safety
 
+	// Latch the first send error and stop the recording loop. Without this,
+	// a closed websocket (e.g. OpenAI returning 401 invalid_api_key on
+	// connect) keeps the malgo capture callback firing and every chunk
+	// produces a "websocket: close sent" error that we log AND push onto
+	// errorChan. Observed in the wild: 4.6M log lines / 327 MB in a few
+	// hours, and an unbounded send to errorChan after the consumer stopped.
+	var sendErrOnce sync.Once
+
 	device, err := malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
 		Data: func(outputBuffer, inputBuffer []byte, frameCount uint32) {
 			if !rr.isRecording {
@@ -214,8 +222,19 @@ func (rr *RealtimeRecorder) recordAndStream() {
 				// Send to transcriber (non-blocking)
 				go func() {
 					if err := rr.transcriber.SendAudio(chunk); err != nil {
-						logger.Errorf("Failed to send audio chunk", err)
-						rr.errorChan <- fmt.Errorf("failed to send audio: %w", err)
+						sendErrOnce.Do(func() {
+							logger.Error("Realtime send failed, stopping recording", err)
+							rr.isRecording = false
+							// Best-effort error report; non-blocking so we
+							// don't deadlock if the consumer already left.
+							select {
+							case rr.errorChan <- fmt.Errorf("failed to send audio: %w", err):
+							default:
+							}
+							if rr.cancel != nil {
+								rr.cancel()
+							}
+						})
 					}
 				}()
 			}
