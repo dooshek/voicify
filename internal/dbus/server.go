@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dooshek/voicify/internal/audio"
-	"github.com/dooshek/voicify/internal/clipboard"
 	"github.com/dooshek/voicify/internal/logger"
 	"github.com/dooshek/voicify/internal/notification"
 	"github.com/dooshek/voicify/internal/state"
@@ -276,7 +275,13 @@ func (s *Server) Start() error {
 				},
 			},
 			Signals: []introspect.Signal{
-				{Name: "RecordingStarted"},
+				{
+					Name: "RecordingStarted",
+					Args: []introspect.Arg{
+						{Name: "mode", Type: "s"},
+					},
+				},
+				{Name: "TranscriptionStarted"},
 				{
 					Name: "TranscriptionReady",
 					Args: []introspect.Arg{
@@ -436,7 +441,7 @@ func (s *Server) TogglePostTranscriptionAutoPaste() *dbus.Error {
 
 		s.recordingStartTime = time.Now()
 		s.recorder.Start()
-		s.emitSignal("RecordingStarted")
+		s.emitSignal("RecordingStarted", "autopaste")
 		s.startForwardingLevels()
 	}
 
@@ -470,7 +475,7 @@ func (s *Server) TogglePostTranscriptionRouter() *dbus.Error {
 
 		s.recordingStartTime = time.Now()
 		s.recorder.Start()
-		s.emitSignal("RecordingStarted")
+		s.emitSignal("RecordingStarted", "router")
 		s.startForwardingLevels()
 	}
 
@@ -512,7 +517,7 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 	}
 
 	// Emit signal
-	s.emitSignal("RecordingStarted")
+	s.emitSignal("RecordingStarted", "realtime")
 
 	// Start forwarding real-time transcription results
 	s.startForwardingRealtimeTranscription()
@@ -775,6 +780,7 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 	go func() {
 		logger.Debugf("D-Bus: Stopping post-transcription auto-paste recording")
 
+		s.emitSignal("TranscriptionStarted")
 		transcription, err := s.recorder.Stop()
 		go s.handsfreeManager.RestoreProfile()
 		if err != nil {
@@ -799,18 +805,8 @@ func (s *Server) stopPostTranscriptionAutoPasteAsync() {
 			s.statsManager.AddRecording(s.transcriptionModel, duration)
 		}
 
-		// Copy to clipboard and trigger paste via extension
-		if err := clipboard.CopyToClipboard(transcription); err != nil {
-			logger.Error("D-Bus: Failed to copy to clipboard", err)
-			s.emitSignal("RecordingError", "clipboard error")
-			s.postTranscriptionAutoPaste = false
-			return
-		}
-
-		// Reset mode
+		// Extension handles clipboard + paste on TranscriptionReady
 		s.postTranscriptionAutoPaste = false
-
-		// Emit signal that transcription is ready for auto-paste
 		s.emitSignal("TranscriptionReady", transcription)
 	}()
 }
@@ -820,6 +816,7 @@ func (s *Server) stopPostTranscriptionRouterAsync() {
 	go func() {
 		logger.Debugf("D-Bus: Stopping post-transcription router recording")
 
+		s.emitSignal("TranscriptionStarted")
 		transcription, err := s.recorder.Stop()
 		go s.handsfreeManager.RestoreProfile()
 		if err != nil {

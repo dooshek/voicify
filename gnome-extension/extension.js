@@ -92,7 +92,10 @@ const VoicifyDBusInterface = `
       <arg name="enabled" type="b" direction="in"/>
       <arg name="device" type="s" direction="in"/>
     </method>
-    <signal name="RecordingStarted"/>
+    <signal name="RecordingStarted">
+      <arg name="mode" type="s"/>
+    </signal>
+    <signal name="TranscriptionStarted"/>
     <signal name="TranscriptionReady">
       <arg name="text" type="s"/>
     </signal>
@@ -1114,22 +1117,25 @@ export default class VoicifyExtension extends Extension {
     // --- D-Bus signal handlers ---
 
     _onTranscriptionReady(text) {
-        console.debug('Transcription ready:', text);
-
         if (this._isRealtimeMode) return;
 
         if (this._isPostRouter) {
-            console.debug('Post-router mode - waiting for plugin RequestPaste signal');
             this._state = State.FINISHED;
             this._isPostRouter = false;
             this._updateIndicator();
             this._startFinishedAnimation();
         } else if (this._isPostAutoPaste) {
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
             this._state = State.FINISHED;
             this._isPostAutoPaste = false;
             this._updateIndicator();
             this._pendingPaste = true;
             this._startFinishedAnimation();
+        } else {
+            // Trigger arrived without our flags set (e.g. evdev-level keyd before
+            // RecordingStarted reached us). Fall back to clean fade-out.
+            this._state = State.IDLE;
+            this._fadeOutAndHide(200);
         }
     }
 
@@ -2070,11 +2076,24 @@ export default class VoicifyExtension extends Extension {
         );
 
         this._dbusSignalIds.push(
-            this._dbusProxy.connectSignal('RecordingStarted', () => {
+            this._dbusProxy.connectSignal('RecordingStarted', (proxy, sender, [mode]) => {
+                this._isRealtimeMode = mode === 'realtime';
+                this._isPostAutoPaste = mode === 'autopaste';
+                this._isPostRouter = mode === 'router';
                 this._state = State.RECORDING;
                 this._updateIndicator();
                 this._showWaveWidget();
                 this._startLevelWave();
+            })
+        );
+
+        this._dbusSignalIds.push(
+            this._dbusProxy.connectSignal('TranscriptionStarted', () => {
+                if (this._state !== State.RECORDING) return;
+                if (this._isRealtimeMode) return;
+                this._state = State.UPLOADING;
+                this._updateIndicator();
+                this._updateWaveWidget();
             })
         );
 
