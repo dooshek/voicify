@@ -579,7 +579,7 @@ export default class VoicifyPreferences extends ExtensionPreferences {
             // Block - revert immediately
             settings.set_boolean('auto-pause-playback', false);
 
-            const cmd = _getInstallCommand();
+            const cmd = _getInstallCommand('playerctl');
             const dialog = new Adw.AlertDialog({
                 heading: 'playerctl is not installed',
                 body: 'Auto-pause requires playerctl to reliably control media playback.\n\nInstall it first, then enable this option.\n\nRun in terminal:',
@@ -599,6 +599,56 @@ export default class VoicifyPreferences extends ExtensionPreferences {
 
             dialog.present(window);
         });
+
+        // Clipboard backend
+        const CLIPBOARD_METHODS = ['extension', 'wl-copy', 'xclip'];
+        const CLIPBOARD_LABELS = [
+            'Default',
+            'wl-copy (for Wayland)',
+            'xclip (for X11)',
+        ];
+        const clipboardModel = new Gtk.StringList();
+        for (const label of CLIPBOARD_LABELS) clipboardModel.append(label);
+        const clipboardRow = new Adw.ComboRow({
+            title: 'Copy to clipboard via',
+            subtitle: 'Stick with Default. Switch only if pasting into a remote desktop (NoMachine, RDP, VNC) doesn\'t work — then pick wl-copy on Wayland or xclip on X11.',
+            model: clipboardModel,
+        });
+        const currentClipboard = settings.get_string('clipboard-method');
+        const clipboardIdx = CLIPBOARD_METHODS.indexOf(currentClipboard);
+        if (clipboardIdx >= 0) clipboardRow.set_selected(clipboardIdx);
+        clipboardRow.connect('notify::selected', () => {
+            const idx = clipboardRow.get_selected();
+            if (idx < 0 || idx >= CLIPBOARD_METHODS.length) return;
+            const choice = CLIPBOARD_METHODS[idx];
+
+            // For external CLI backends, verify the binary is on PATH.
+            // If missing, show install instructions and revert to Default.
+            if ((choice === 'wl-copy' || choice === 'xclip') &&
+                !GLib.find_program_in_path(choice)) {
+                clipboardRow.set_selected(0);
+                settings.set_string('clipboard-method', 'extension');
+
+                const cmd = _getInstallCommand(choice);
+                const dialog = new Adw.AlertDialog({
+                    heading: `${choice} is not installed`,
+                    body: `${choice} needs to be installed for this option to work.\n\nInstall it first, then come back and select it again.\n\nRun in terminal:`,
+                    content_width: 460,
+                });
+                const cmdEntry = new Gtk.Entry({
+                    text: cmd, editable: false, hexpand: true,
+                });
+                cmdEntry.add_css_class('monospace');
+                dialog.set_extra_child(cmdEntry);
+                dialog.add_response('ok', 'OK');
+                dialog.set_default_response('ok');
+                dialog.present(window);
+                return;
+            }
+
+            settings.set_string('clipboard-method', choice);
+        });
+        behaviorGroup.add(clipboardRow);
 
         // Enter after paste delay
         const enterDelayRow = new Adw.ActionRow({
@@ -1015,32 +1065,42 @@ function _addShortcutRow(group, title, settingKey, settings, window) {
 
 // --- Distro detection for install hints ---
 
-function _getInstallCommand() {
+// Per-distro package names. Most binaries match their package name; the few
+// that don't (wl-copy ships in wl-clipboard, gentoo uses category-prefixed
+// atoms) are listed explicitly.
+const _PKG_NAMES = {
+    'playerctl': { default: 'playerctl', gentoo: 'media-sound/playerctl', nix: 'playerctl' },
+    'wl-copy':   { default: 'wl-clipboard', gentoo: 'x11-misc/wl-clipboard', nix: 'wl-clipboard' },
+    'xclip':     { default: 'xclip', gentoo: 'x11-misc/xclip', nix: 'xclip' },
+};
+
+function _getInstallCommand(binary) {
+    const pkg = _PKG_NAMES[binary] || { default: binary, gentoo: binary, nix: binary };
     try {
         const [ok, contents] = GLib.file_get_contents('/etc/os-release');
-        if (!ok) return 'sudo dnf install playerctl';
+        if (!ok) return `sudo dnf install ${pkg.default}`;
         const text = new TextDecoder().decode(contents);
         const idMatch = text.match(/^ID=(.+)$/m);
         const id = idMatch ? idMatch[1].replace(/"/g, '').toLowerCase() : '';
 
         if (['fedora', 'rhel', 'centos', 'nobara'].includes(id))
-            return 'sudo dnf install playerctl';
+            return `sudo dnf install ${pkg.default}`;
         if (['ubuntu', 'debian', 'pop', 'linuxmint', 'elementary', 'zorin'].includes(id))
-            return 'sudo apt install playerctl';
+            return `sudo apt install ${pkg.default}`;
         if (['arch', 'manjaro', 'endeavouros', 'garuda', 'cachyos'].includes(id))
-            return 'sudo pacman -S playerctl';
+            return `sudo pacman -S ${pkg.default}`;
         if (['opensuse-tumbleweed', 'opensuse-leap', 'suse'].includes(id))
-            return 'sudo zypper install playerctl';
+            return `sudo zypper install ${pkg.default}`;
         if (id === 'gentoo')
-            return 'sudo emerge media-sound/playerctl';
+            return `sudo emerge ${pkg.gentoo}`;
         if (id === 'void')
-            return 'sudo xbps-install playerctl';
+            return `sudo xbps-install ${pkg.default}`;
         if (id === 'nixos')
-            return 'nix-env -iA nixpkgs.playerctl';
+            return `nix-env -iA nixpkgs.${pkg.nix}`;
     } catch (e) {
         // ignore
     }
-    return 'sudo dnf install playerctl';
+    return `sudo dnf install ${pkg.default}`;
 }
 
 // --- Advanced settings helpers ---

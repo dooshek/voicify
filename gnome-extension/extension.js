@@ -1125,7 +1125,7 @@ export default class VoicifyExtension extends Extension {
             this._updateIndicator();
             this._startFinishedAnimation();
         } else if (this._isPostAutoPaste) {
-            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+            this._writeClipboard(text);
             this._state = State.FINISHED;
             this._isPostAutoPaste = false;
             this._updateIndicator();
@@ -1151,7 +1151,7 @@ export default class VoicifyExtension extends Extension {
 
     _onRequestPaste(text) {
         console.debug('RequestPaste from plugin');
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        this._writeClipboard(text);
 
         if (this._pasteTimerId) GLib.Source.remove(this._pasteTimerId);
         this._pasteTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
@@ -1170,10 +1170,44 @@ export default class VoicifyExtension extends Extension {
         this._fadeOutAndHide(200);
     }
 
+    // --- Clipboard ---
+    //
+    // The "extension" backend uses GNOME Shell's internal St.Clipboard, which
+    // is fast but makes the compositor itself the selection owner. Some Wayland
+    // clients (notably NoMachine player) don't observe data offers from the
+    // compositor, so the clipboard never propagates to the remote host. The
+    // wl-copy / xclip backends fork a normal CLI client that takes ownership
+    // through the standard data device protocol, which remote-desktop clients
+    // do observe.
+    _writeClipboard(text) {
+        const method = this._settings
+            ? this._settings.get_string('clipboard-method')
+            : 'extension';
+
+        if (method === 'wl-copy' || method === 'xclip') {
+            const argv = method === 'wl-copy'
+                ? ['wl-copy']
+                : ['xclip', '-selection', 'clipboard'];
+            try {
+                const proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDIN_PIPE);
+                proc.communicate_utf8_async(text, null, (p, res) => {
+                    try { p.communicate_utf8_finish(res); }
+                    catch (e) { console.error(`Voicify: ${argv[0]} write failed:`, e.message); }
+                });
+                return;
+            } catch (e) {
+                console.error(`Voicify: failed to spawn ${argv[0]}, falling back to St.Clipboard:`, e.message);
+                // fall through to St.Clipboard
+            }
+        }
+
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+    }
+
     // --- Text injection ---
 
     _injectTextDelta(text) {
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        this._writeClipboard(text);
 
         if (this._pasteTimerId) GLib.Source.remove(this._pasteTimerId);
         this._pasteTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {

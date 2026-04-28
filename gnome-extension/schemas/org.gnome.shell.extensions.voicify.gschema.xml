@@ -89,6 +89,11 @@
       <summary>Press Enter after auto-paste</summary>
       <description>Automatically press Enter after pasting transcribed text</description>
     </key>
+    <key name="clipboard-method" type="s">
+      <default>'extension'</default>
+      <summary>Copy to clipboard via</summary>
+      <description>How the transcribed text is put on your clipboard. "Default" works for almost everyone. Switch to "wl-copy" or "xclip" only if you're pasting into a remote desktop session (NoMachine, RDP, VNC) and the text isn't showing up there — those tools share the clipboard the way remote desktop apps expect.</description>
+    </key>
     <key name="enter-after-paste-delay" type="i">
       <default>500</default>
       <summary>Enter after paste delay (ms)</summary>
