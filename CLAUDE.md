@@ -70,6 +70,17 @@ logger.Infof(format string, v ...interface{})              // BEZ error
 
 - Conventional commits: `type(scope): description`
 - **NIE** commituj automatycznie - przygotuj komendy do review
+- Wyjątek: `deploy.sh` sam bumpuje + commituje wersję D-Bus interface (tylko gdy tree clean)
+
+### D-Bus interface version compat
+
+Daemon (Go) i extension (JS) trzymają identyczny hash XML interface. Ważne bo SyncThing kopiuje extension.js out-of-band i daemon na drugim hoście może być starszy.
+
+- `internal/dbus/version.go` - `const InterfaceVersion`
+- `gnome-extension/extension.js` - `const EXPECTED_INTERFACE_VERSION`
+- `deploy.sh` liczy SHA256 z `VoicifyDBusInterface` XML literal, sed-uje do obu plików, auto-commit gdy tree clean
+- Extension przy `enable()` woła `GetInterfaceVersion` na daemon. Mismatch → notyfikacja systemowa + czerwona ikona w panelu + "⚠ Version mismatch" item w menu
+- Po edycji XML interface: `bash deploy.sh` zbumpuje hash, na drugim hoście (SyncThing) extension wykryje rozjazd przy następnym logout/login
 
 ## Skróty klawiszowe
 

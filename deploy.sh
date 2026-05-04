@@ -11,6 +11,31 @@ EXT_UUID="voicify@dooshek.com"
 EXT_DST="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
 LEGACY_DBUS_ACTIVATION="$HOME/.local/share/dbus-1/services/com.dooshek.voicify.service"
 
+echo "=== Bumping interface version ==="
+# Hash the D-Bus interface XML literal in extension.js. Both daemon (Go const)
+# and extension (JS const) get this value baked in. At enable() the extension
+# calls GetInterfaceVersion on the daemon and warns the user if they diverge -
+# this catches the SyncThing case where extension JS is copied to a host whose
+# daemon binary was not rebuilt.
+WAS_DIRTY=$(git status --porcelain 2>/dev/null | wc -l)
+IFACE_HASH=$(awk '/const VoicifyDBusInterface = `/,/`;/' gnome-extension/extension.js | sha256sum | cut -c1-12)
+sed -i "s/^const InterfaceVersion = \".*\"$/const InterfaceVersion = \"$IFACE_HASH\"/" internal/dbus/version.go
+sed -i "s/^const EXPECTED_INTERFACE_VERSION = '.*';$/const EXPECTED_INTERFACE_VERSION = '$IFACE_HASH';/" gnome-extension/extension.js
+echo "Interface version: $IFACE_HASH"
+
+if ! git diff --quiet internal/dbus/version.go gnome-extension/extension.js 2>/dev/null; then
+    # Auto-commit only when the tree was clean before the bump. If the user
+    # had other in-progress edits (including to extension.js itself), leave
+    # the bump unstaged so they can review and fold it into their own commit.
+    if [ "$WAS_DIRTY" -eq 0 ]; then
+        git add internal/dbus/version.go gnome-extension/extension.js
+        git commit -m "chore(dbus): bump interface version to $IFACE_HASH" >/dev/null
+        echo "Auto-committed version bump"
+    else
+        echo "Working tree had pending changes - version bump left unstaged"
+    fi
+fi
+
 echo "=== Building Go ==="
 mkdir -p "$(dirname "$BIN_DST")"
 go build -o "$BIN_DST" ./cmd/voicify/main.go

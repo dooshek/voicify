@@ -71,6 +71,9 @@ const VoicifyDBusInterface = `
     <method name="GetStatus">
       <arg name="is_recording" type="b" direction="out"/>
     </method>
+    <method name="GetInterfaceVersion">
+      <arg name="version" type="s" direction="out"/>
+    </method>
     <method name="CancelRecording"/>
     <method name="UpdateFocusedWindow">
       <arg name="title" type="s" direction="in"/>
@@ -122,6 +125,12 @@ const VoicifyProxy = Gio.DBusProxy.makeProxyWrapper(VoicifyDBusInterface);
 
 const DBUS_SERVICE_NAME = 'com.dooshek.voicify';
 
+// Interface version - auto-bumped by deploy.sh from hash of VoicifyDBusInterface.
+// At enable() the extension calls daemon's GetInterfaceVersion and warns the
+// user if the values diverge (typical cause: SyncThing/file-sync brought a new
+// extension JS to a host whose daemon binary is still the old build).
+const EXPECTED_INTERFACE_VERSION = 'd63c611f7eec';
+
 export default class VoicifyExtension extends Extension {
     enable() {
         console.debug('Voicify extension enabled');
@@ -134,6 +143,8 @@ export default class VoicifyExtension extends Extension {
         this._postRouterAction = null;
         this._acceleratorHandlerId = 0;
         this._state = State.IDLE;
+        this._interfaceMismatch = null;
+        this._mismatchMenuItem = null;
         this._waveWidget = null;
         this._waveBars = null;
         this._uploadTimer = null;
@@ -369,6 +380,8 @@ export default class VoicifyExtension extends Extension {
         }
 
         this._menuShortcutLabels = {};
+        this._interfaceMismatch = null;
+        this._mismatchMenuItem = null;
 
         if (this._indicator) {
             this._indicator.destroy();
@@ -497,6 +510,13 @@ export default class VoicifyExtension extends Extension {
 
     _updateIndicator() {
         if (!this._icon) return;
+
+        if (this._interfaceMismatch) {
+            // Red icon overrides recording/upload colors so the user notices
+            // the broken state before pressing a shortcut and getting silent failure.
+            this._icon.style = 'color: rgb(220, 50, 50);';
+            return;
+        }
 
         if (this._state === State.RECORDING) {
             const { r, g, b } = this._currentTheme.center;
@@ -2193,6 +2213,68 @@ export default class VoicifyExtension extends Extension {
         // Send initial config to daemon
         this._sendTranscriptionConfig();
         this._syncHandsfreeConfig();
+
+        // Check daemon/extension interface version match. Mismatch typically means
+        // file sync (e.g. SyncThing) copied a new extension JS but the local daemon
+        // binary is still the old build (or vice versa). Without this check the
+        // failure is silent: D-Bus drops signals with mismatched signatures and
+        // nothing happens when the user presses a shortcut.
+        this._checkInterfaceVersion();
+    }
+
+    _checkInterfaceVersion() {
+        if (!this._dbusProxy) return;
+        try {
+            this._dbusProxy.GetInterfaceVersionRemote((result, error) => {
+                if (error) {
+                    // Daemon predates the version method - definitively old.
+                    if (String(error).includes('UnknownMethod') ||
+                        String(error).includes('Unknown method')) {
+                        this._onInterfaceMismatch('older-than-versioning');
+                    }
+                    return;
+                }
+                const [daemonVersion] = result;
+                if (daemonVersion !== EXPECTED_INTERFACE_VERSION) {
+                    this._onInterfaceMismatch(daemonVersion);
+                } else {
+                    this._interfaceMismatch = null;
+                    this._updateIndicator();
+                }
+            });
+        } catch (e) {
+            console.error('Voicify: GetInterfaceVersion call failed:', e.message);
+        }
+    }
+
+    _onInterfaceMismatch(daemonVersion) {
+        this._interfaceMismatch = {
+            daemon: daemonVersion,
+            extension: EXPECTED_INTERFACE_VERSION,
+        };
+        const msg = `Voicify: extension v${EXPECTED_INTERFACE_VERSION} ↔ daemon v${daemonVersion} — rebuild daemon or logout/login`;
+        console.error(msg);
+        try {
+            Main.notify('Voicify - version mismatch', msg);
+        } catch (e) {
+            // Main.notify can fail very early in enable() - non-critical.
+        }
+        this._addMismatchMenuItem();
+        this._updateIndicator();
+    }
+
+    _addMismatchMenuItem() {
+        if (!this._indicator || this._mismatchMenuItem) return;
+        const label = `⚠ Version mismatch: ext v${this._interfaceMismatch.extension} / daemon v${this._interfaceMismatch.daemon}`;
+        this._mismatchMenuItem = new PopupMenu.PopupMenuItem(label);
+        this._mismatchMenuItem.label.style = 'color: rgb(220, 50, 50); font-weight: bold;';
+        this._mismatchMenuItem.connect('activate', () => {
+            Main.notify(
+                'Voicify',
+                'Run deploy.sh and logout/login. SyncThing likely brought a newer extension to a host with an old daemon binary.',
+            );
+        });
+        this._indicator.menu.addMenuItem(this._mismatchMenuItem, 0);
     }
 
     _sendTranscriptionConfig() {

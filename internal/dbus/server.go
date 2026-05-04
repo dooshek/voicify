@@ -228,6 +228,12 @@ func (s *Server) Start() error {
 					},
 				},
 				{
+					Name: "GetInterfaceVersion",
+					Args: []introspect.Arg{
+						{Name: "version", Type: "s", Direction: "out"},
+					},
+				},
+				{
 					Name: "CancelRecording",
 				},
 				{
@@ -531,6 +537,14 @@ func (s *Server) StartRealtimeRecording() *dbus.Error {
 // GetStatus returns current recording status (D-Bus method)
 func (s *Server) GetStatus() (bool, *dbus.Error) {
 	return s.recorder.IsRecording() || s.realtimeRecorder.IsRecording(), nil
+}
+
+// GetInterfaceVersion returns the D-Bus interface version baked into the
+// daemon at build time. The extension compares it against its own
+// EXPECTED_INTERFACE_VERSION; mismatch means daemon and extension were built
+// from different revisions of the interface XML.
+func (s *Server) GetInterfaceVersion() (string, *dbus.Error) {
+	return InterfaceVersion, nil
 }
 
 // CancelRecording cancels the current recording (D-Bus method)
