@@ -290,7 +290,7 @@ export default class VoicifyExtension extends Extension {
             const seat = Clutter.get_default_backend().get_default_seat();
             this._virtualKeyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         } catch (error) {
-            console.debug('Failed to create virtual keyboard device:', error.message);
+            console.error('Voicify: failed to create virtual keyboard device:', error.message);
             this._virtualKeyboard = null;
         }
 
@@ -1219,31 +1219,37 @@ export default class VoicifyExtension extends Extension {
 
     _performAutoPaste() {
         try {
-            if (!this._virtualKeyboard) return;
+            if (!this._virtualKeyboard) {
+                console.error('Voicify: no virtual keyboard device, cannot auto-paste');
+                return;
+            }
 
             const { app } = this._getFocusedWindow();
             const appLower = (app || '').toLowerCase();
             const isTerminal = TERMINAL_WM_CLASSES.some(t => appLower.includes(t));
 
-            const eventTime = global.get_current_time();
-            let lastTime = eventTime;
+            // notify_keyval() takes time_us on the monotonic clock. Passing
+            // global.get_current_time() (milliseconds) produced stale timestamps
+            // that GNOME Shell 51 no longer delivers to the focused client.
+            const MS = 1000;
+            let lastTime = GLib.get_monotonic_time();
 
             if (isTerminal) {
                 // Ctrl+Shift+V for terminals
                 this._virtualKeyboard.notify_keyval(lastTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(lastTime + 10, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(lastTime + 20, Clutter.KEY_v, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(lastTime + 30, Clutter.KEY_v, Clutter.KeyState.RELEASED);
-                this._virtualKeyboard.notify_keyval(lastTime + 40, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
-                this._virtualKeyboard.notify_keyval(lastTime + 50, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
-                lastTime += 60;
+                this._virtualKeyboard.notify_keyval(lastTime + 10 * MS, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 20 * MS, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 30 * MS, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime + 40 * MS, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime + 50 * MS, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+                lastTime += 60 * MS;
             } else {
                 // Ctrl+V for standard apps
                 this._virtualKeyboard.notify_keyval(lastTime, Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(lastTime + 10, Clutter.KEY_v, Clutter.KeyState.PRESSED);
-                this._virtualKeyboard.notify_keyval(lastTime + 20, Clutter.KEY_v, Clutter.KeyState.RELEASED);
-                this._virtualKeyboard.notify_keyval(lastTime + 30, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
-                lastTime += 40;
+                this._virtualKeyboard.notify_keyval(lastTime + 10 * MS, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+                this._virtualKeyboard.notify_keyval(lastTime + 20 * MS, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+                this._virtualKeyboard.notify_keyval(lastTime + 30 * MS, Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+                lastTime += 40 * MS;
             }
 
             // Optional Enter after paste (delayed so app has time to process clipboard)
@@ -1255,17 +1261,17 @@ export default class VoicifyExtension extends Extension {
                     this._enterAfterPasteTimer = null;
                     try {
                         if (!this._virtualKeyboard) return GLib.SOURCE_REMOVE;
-                        const t = global.get_current_time();
+                        const t = GLib.get_monotonic_time();
                         this._virtualKeyboard.notify_keyval(t, Clutter.KEY_Return, Clutter.KeyState.PRESSED);
-                        this._virtualKeyboard.notify_keyval(t + 10, Clutter.KEY_Return, Clutter.KeyState.RELEASED);
+                        this._virtualKeyboard.notify_keyval(t + 10 * MS, Clutter.KEY_Return, Clutter.KeyState.RELEASED);
                     } catch (e) {
-                        console.debug('Enter after paste failed:', e.message);
+                        console.error('Voicify: enter after paste failed:', e.message);
                     }
                     return GLib.SOURCE_REMOVE;
                 });
             }
         } catch (error) {
-            console.debug('Virtual keyboard paste failed:', error.message);
+            console.error('Voicify: virtual keyboard paste failed:', error.message);
         }
     }
 
