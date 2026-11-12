@@ -1333,7 +1333,7 @@ export default class VoicifyExtension extends Extension {
         this._waveContainer = new St.BoxLayout({
             style_class: 'voicify-wave-container',
             style: `border-radius: ${dc.borderRadius}px;`,
-            vertical: false,
+            orientation: Clutter.Orientation.HORIZONTAL,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             x: shadowPad,
@@ -1648,7 +1648,7 @@ export default class VoicifyExtension extends Extension {
                      center, edge, db, totalWidth, totalHeight) {
         this._trailContainer = new St.BoxLayout({
             style_class: 'voicify-wave-container',
-            vertical: false,
+            orientation: Clutter.Orientation.HORIZONTAL,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -1813,7 +1813,7 @@ export default class VoicifyExtension extends Extension {
         const radius = dec.borderRadius || 0;
 
         const box = new St.BoxLayout({
-            vertical: true,
+            orientation: Clutter.Orientation.VERTICAL,
             style: `border-radius: ${radius}px;`,
             clip_to_allocation: true,
             x: 0,
