@@ -3,7 +3,7 @@
   "description": "Voice-to-text with global keyboard shortcuts",
   "uuid": "voicify@dooshek.com",
   "settings-schema": "org.gnome.shell.extensions.voicify",
-  "shell-version": ["48", "49"],
+  "shell-version": ["48", "49", "50", "51"],
   "version": 1,
   "url": "https://github.com/dooshek/voicify"
 }
